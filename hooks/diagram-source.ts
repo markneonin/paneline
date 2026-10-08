@@ -1,6 +1,10 @@
+import { displayWidth } from "./text-width";
 import { renderMermaidAscii, setChartSize } from "./vendor/mermaid-text.js";
 
+export const WIDE_PAD = "\uE001";
+const WIDE_CELLS = 2;
 const QUOTED_COMMA = "\uE000";
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const X_AXIS_LIST = /^(\s*x-axis\b[^[\n]*\[)([^\]\n]*)\]/m;
 const DECISION_NODE = /(\w)\{(?!\{)([^{}\n]*)\}(?!\})/g;
 const DETACHED_EDGE_START = /│ ├/g;
@@ -17,7 +21,7 @@ const MAX_CHART_HEIGHT = 18;
 
 export function renderArt(source: string, columns: number): string {
   const isChart = /^\s*xychart/.test(source);
-  const fixed = fixSource(source);
+  const fixed = padWide(fixSource(source));
   if (isChart) setChartSize(...chartSize(fixed, columns));
   const art = tidy(renderMermaidAscii(fixed, { colorMode: "none", paddingX: 3, paddingY: 1 }));
   return isChart ? writeBarValues(art, source) : joinEdgeStarts(dropEmptyRows(art));
@@ -29,6 +33,11 @@ function fixSource(source: string): string {
     .replace(EDGE_LABEL_GAP, "$1|")
     .replace(DECISION_NODE, "$1[$2]");
 }
+
+const padWide = (text: string): string =>
+  Array.from(graphemes.segment(text), ({ segment }) =>
+    displayWidth(segment) === WIDE_CELLS ? `${segment}${WIDE_PAD}` : segment,
+  ).join("");
 
 const unquote = (items: string): string =>
   items.replace(/"([^"]*)"/g, (_, inner: string) => inner.replaceAll(",", QUOTED_COMMA));

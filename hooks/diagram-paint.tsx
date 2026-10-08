@@ -1,5 +1,6 @@
 import type { ElementTable, RenderElement } from "claude-code";
 
+import { WIDE_PAD } from "./diagram-source";
 import { palette } from "./palette";
 import type { ReplyLook } from "./reply-look";
 
@@ -71,6 +72,7 @@ function panelOf({ Box, Text }: ElementTable, key: string, lines: Run[][]): Rend
 function runsOf(chars: string[], colors: (string | undefined)[]): Run[] {
   const runs: Run[] = [];
   chars.forEach((char, x) => {
+    if (char === WIDE_PAD) return;
     const last = runs[runs.length - 1];
     if (last !== undefined && last.color === colors[x]) last.text += char;
     else runs.push({ text: char, color: colors[x] });
