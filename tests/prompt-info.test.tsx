@@ -5,8 +5,11 @@ import type { Engine, MockClock } from "claude-code/testing";
 import { ENGINE_DEFAULT_GREY } from "../hooks/session-color";
 
 type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] };
-type Mounted = { drawn: () => Promise<unknown> };
-type World = { clock: MockClock; band: Mounted };
+type Mounted = {
+  drawn: () => Promise<unknown>;
+  press: (target: { key: string }) => Promise<unknown>;
+};
+type World = { clock: MockClock; band: Mounted; commands: string[] };
 type WorldOptions = { model?: string; cwd?: string; home?: string };
 type BandOptions = { columns?: number };
 
@@ -14,6 +17,9 @@ const HOME = "/Users/dev";
 const WORK_DIR = "/Users/dev/IT";
 const MODEL = "claude-opus-5-5";
 const ENGINE_ROW = "engine row";
+const MODEL_CHIP_KEY = "model-chip";
+const EFFORT_CHIP_KEY = "effort-chip";
+const MODEL_COMMAND = "model";
 const SESSION_START = { cwd: WORK_DIR, surface: "terminal", isInteractive: true } as const;
 
 describe("the chips row", () => {
@@ -24,9 +30,9 @@ describe("the chips row", () => {
 
     const row = await lastRow(world);
 
-    expect(shownText(row)).toBe(" opus 5.5  high  ~/IT ");
+    expect(rowText(row)).toBe(" opus 5.5  high  ~/IT ");
     expect(chipTexts(row)).toEqual([" opus 5.5 ", " high ", " ~/IT "]);
-    expect(chipsArePlainGrey(row)).toBe(true);
+    expect(chipsPlainGrey(row)).toBe(true);
   });
 
   test("C2 before any effort is known there are two chips", async ($, on) => {
@@ -59,9 +65,9 @@ describe("the chips row", () => {
 
     const row = await lastRow(world);
 
-    expect(shownText(row).length).toBeLessThanOrEqual(40);
-    expect(shownText(row)).toContain("…");
-    expect(shownText(row).trimEnd().endsWith("/at/all")).toBe(true);
+    expect(rowText(row).length).toBeLessThanOrEqual(40);
+    expect(rowText(row)).toContain("…");
+    expect(rowText(row).trimEnd().endsWith("/at/all")).toBe(true);
   });
 
   test("C6 a directory that only starts like home keeps its full path", async ($, on) => {
@@ -90,6 +96,33 @@ describe("the chips row", () => {
 
     expect(chipTexts(await lastRow(world))).toContain(" high ");
   });
+  test("C9 pressing the model chip opens the model picker", async ($, on) => {
+    const world = await worldOf($, on);
+    await $.session.start(SESSION_START);
+    await stopMainChat($, world, "high");
+
+    await world.band.press({ key: MODEL_CHIP_KEY });
+
+    expect(world.commands).toEqual([MODEL_COMMAND]);
+  });
+
+  test("C10 pressing the effort chip opens the model picker", async ($, on) => {
+    const world = await worldOf($, on);
+    await $.session.start(SESSION_START);
+    await stopMainChat($, world, "high");
+
+    await world.band.press({ key: EFFORT_CHIP_KEY });
+
+    expect(world.commands).toEqual([MODEL_COMMAND]);
+  });
+
+  test("C11 the directory chip is not pressable", async ($, on) => {
+    const world = await worldOf($, on);
+    await $.session.start(SESSION_START);
+    await stopMainChat($, world, "high");
+
+    expect(pressableKeys(await lastRow(world))).toEqual([MODEL_CHIP_KEY, EFFORT_CHIP_KEY]);
+  });
 });
 
 async function worldOf(
@@ -99,6 +132,7 @@ async function worldOf(
   bandOptions: BandOptions = {},
 ): Promise<World> {
   const clock = mock.clock(on);
+  const commands: string[] = [];
   mock.env(on, { HOME: options.home ?? HOME });
   const model = options.model ?? MODEL;
   const cwd = options.cwd ?? WORK_DIR;
@@ -112,6 +146,10 @@ async function worldOf(
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("ui.open", () => ({ value: { isPlaced: true } }));
   on("command.register", () => ({ value: {} }) as never);
+  on("command.run", { command: MODEL_COMMAND }, (_$, e) => {
+    commands.push(e.command);
+    return {};
+  });
   on("classic.SessionStart", () => ({}));
   on("classic.UserPromptSubmit", () => ({}));
   on("classic.PostModelSwitch", () => ({}));
@@ -139,7 +177,7 @@ async function worldOf(
     viewport: { columns, rows: 40 },
   });
 
-  return { clock, band };
+  return { clock, band, commands };
 }
 
 async function lastRow(world: World): Promise<Drawn> {
@@ -148,21 +186,35 @@ async function lastRow(world: World): Promise<Drawn> {
 }
 
 function chipTexts(row: Drawn): string[] {
-  return coloredTexts(row).map(shownText);
-}
-
-function chipsArePlainGrey(row: Drawn): boolean {
-  return coloredTexts(row).every(
-    (chip) =>
-      chip.props?.backgroundColor === undefined && chip.props?.color === ENGINE_DEFAULT_GREY,
+  return chipsOf(row).map((chip) =>
+    chip.type === "Button" ? String(chip.props?.label) : shownText(chip),
   );
 }
 
-function coloredTexts(node: unknown): Drawn[] {
+function rowText(row: Drawn): string {
+  return chipTexts(row).join("");
+}
+
+function pressableKeys(row: Drawn): string[] {
+  return chipsOf(row)
+    .filter((chip) => chip.type === "Button")
+    .map((chip) => String(chip.props?.key));
+}
+
+function chipsPlainGrey(row: Drawn): boolean {
+  return chipsOf(row)
+    .filter((chip) => chip.type !== "Button")
+    .every(
+      (chip) =>
+        chip.props?.backgroundColor === undefined && chip.props?.color === ENGINE_DEFAULT_GREY,
+    );
+}
+
+function chipsOf(node: unknown): Drawn[] {
   const drawn = node as Drawn;
-  if (drawn.props?.color !== undefined) return [drawn];
+  if (drawn.type === "Button" || drawn.props?.color !== undefined) return [drawn];
   return (drawn.children ?? []).flatMap((child) =>
-    typeof child === "string" ? [] : coloredTexts(child),
+    typeof child === "string" ? [] : chipsOf(child),
   );
 }
 

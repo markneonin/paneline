@@ -193,6 +193,7 @@ function shownText(node: unknown): string {
   if (typeof node === "string") return node;
   if (Array.isArray(node)) return node.map(shownText).join("");
   const drawn = node as Drawn | undefined;
+  if (drawn?.type === "Button") return String(drawn.props?.label);
   return (drawn?.children ?? []).map(shownText).join("");
 }
 

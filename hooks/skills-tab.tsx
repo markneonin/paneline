@@ -10,6 +10,7 @@ import { skillsTab } from "./skills-draw";
 import type { SkillEntry, SkillOwner } from "./skills-draw";
 import { rankedUses, withoutFolder } from "./use-counts";
 import type { UseCounts } from "./use-counts";
+import { isTerminal } from "./surface";
 
 export const SKILLS_TAB = { id: "skills", label: "Skills" };
 
@@ -43,6 +44,7 @@ let pluginRoots: Map<string, string> | null = null;
 
 export function registerSkillsTab(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (!isShownTab(SKILLS_TAB.id)) return next(e);
     if (justEntered(SKILLS_TAB.id)) {
       markContextStale();

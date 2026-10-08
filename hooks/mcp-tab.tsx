@@ -12,6 +12,7 @@ import { disabledServersOf, projectRootOf, scopeIndexOf } from "./servers";
 import type { McpAction, ScopeIndex } from "./servers";
 import { withoutFolder } from "./use-counts";
 import type { UseCounts } from "./use-counts";
+import { isTerminal } from "./surface";
 
 export const MCP_TAB = { id: "mcp", label: "MCP" };
 
@@ -43,6 +44,7 @@ export function registerMcpTab(on: On): void {
   });
 
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (!isShownTab(MCP_TAB.id)) return next(e);
     if (justEntered(MCP_TAB.id)) {
       markContextStale();

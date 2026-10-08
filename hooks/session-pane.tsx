@@ -8,6 +8,7 @@ import { notePaneTheme, paneInk } from "./pane-ink";
 import { noteShownTab } from "./shown-tab";
 import { tabBar } from "./tab-bar";
 import { TABS } from "./tabs";
+import { isTerminal } from "./surface";
 
 const BODY_PADDING = 1;
 
@@ -17,6 +18,7 @@ const themeAtom = atom({ plugin: "paneline", key: "theme" } as const, "dark");
 
 export function registerSessionPane(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     const [tab, theme, color] = await Promise.all([
       read($, tabAtom),
       read($, themeAtom),

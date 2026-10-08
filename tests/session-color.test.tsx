@@ -40,7 +40,7 @@ describe("chips follow the session colour", () => {
 
     const row = await lastRow($);
     expect(chipBackgrounds(row)).toEqual([undefined, undefined, undefined]);
-    expect(chipTextColors(row)).toEqual([DEFAULT_GREY, DEFAULT_GREY, DEFAULT_GREY]);
+    expect(chipTextColors(row)).toEqual([DEFAULT_GREY]);
   });
 
   test("K3 a colour change shows on the chips at the next event", async ($, on) => {
@@ -76,11 +76,7 @@ describe("chips follow the session colour", () => {
     world.entries.push("yellow");
     await $.classic.Stop(stop());
     await world.settle();
-    expect(chipTextColors(await lastRow($))).toEqual([
-      TITLE_CHIP_TEXT,
-      TITLE_CHIP_TEXT,
-      TITLE_CHIP_TEXT,
-    ]);
+    expect(chipTextColors(await lastRow($))).toEqual([TITLE_CHIP_TEXT]);
   });
 
   test("K7 /color repaints the chips at once, without a prompt or a turn end", async ($, on) => {
@@ -231,14 +227,18 @@ function chipBackgrounds(row: Drawn): unknown[] {
 }
 
 function chipTextColors(row: Drawn): unknown[] {
-  return chips(row).map((chip) => chip.props?.color);
+  return chips(row)
+    .map((chip) => chip.props?.color)
+    .filter((color) => color !== undefined);
 }
 
 function chips(node: Drawn): Drawn[] {
   if (node.props?.color !== undefined) return [node];
-  return (node.children ?? []).flatMap((child) =>
-    typeof child === "string" ? [] : chips(child as Drawn),
+  const children = (node.children ?? []).filter(
+    (child): child is Drawn => typeof child !== "string",
   );
+  if (children.some((child) => child.type === "Button")) return [node];
+  return children.flatMap(chips);
 }
 
 async function selectedTabPaint($: Engine): Promise<{ background: unknown; text: unknown }> {

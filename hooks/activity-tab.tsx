@@ -8,6 +8,7 @@ import { failureText } from "./command-failure";
 import { isLightTheme } from "./pane-kit";
 import { PANE } from "./pane-tab";
 import { isShownTab } from "./shown-tab";
+import { isTerminal } from "./surface";
 
 export const ACTIVITY_TAB = { id: "activity", label: "Activity" };
 
@@ -41,6 +42,7 @@ export function registerActivityTab(on: On): void {
   });
 
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (!isShownTab(ACTIVITY_TAB.id)) return next(e);
     const [allActivity, allCalls, running, allMs, cwd, openCallId, theme, cleared] =
       await Promise.all([
