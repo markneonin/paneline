@@ -93,7 +93,7 @@ paneline works only on your machine. It sends nothing over the network and asks 
 ## Other ways to run
 
 - In the fullscreen layout the pane docks beside the chat from 110 columns. In the main-screen layout (the default under tmux, or with `CLAUDE_CODE_NO_FLICKER=0`) it opens inline above the prompt at any width.
-- The pane opens when a session starts. Run `/session` to open it again after you close it.
+- The pane opens when a session starts, unless the `autoOpen` option is off. Run `/session` to open it again after you close it.
 - Node.js, only if you want to run the checks (see Development).
 
 To run from a clone instead, pass the folder with `--plugin-dir` for one session:
@@ -112,7 +112,7 @@ To load it every time, put these in your shell profile instead:
 export CLAUDE_CODE_PLUGIN_DIRS=/path/to/paneline
 ```
 
-The plugin id is `paneline`. It has one option, `probe`, which writes render times to the debug log. It is off by default.
+The plugin id is `paneline`. It has two options. `autoOpen` opens the pane when a session starts, clears, resumes or forks. It is on by default; turn it off to open the pane only with `/session`. `probe` writes render times to the debug log. It is off by default.
 
 ## Development
 

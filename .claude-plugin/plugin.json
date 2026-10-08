@@ -35,6 +35,12 @@
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Auto-open pane",
+      "description": "Open the Session pane when a session starts, clears, resumes or forks. /session still opens it when off",
+      "default": true
+    },
     "probe": {
       "type": "boolean",
       "title": "Render probe",

@@ -27,6 +27,6 @@ export const register: Register = (on, options) => {
   trackMcpUses(on);
   trackSpend(on);
   registerTabs(on);
-  registerSessionCommand(on);
+  registerSessionCommand(on, options.autoOpen !== false);
   renderChat(on);
 };
