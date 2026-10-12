@@ -8,6 +8,8 @@ import { accentOf, chipColors } from "./session-color";
 const MIN_PATH_COLUMNS = 8;
 const MIN_PATH_COLUMNS_BEFORE_DROP = 12;
 const CHIP_PADDING = 2;
+const MODEL_CHIP_KEY = "model-chip";
+const EFFORT_CHIP_KEY = "effort-chip";
 const PANE_TOGGLE_COLUMNS = 5;
 const PERCENT_SCALE = 100;
 const FILLED_CELL = "▰";
@@ -54,16 +56,19 @@ export function promptInfoRow(
   totalColumns: number,
   colorName: string,
   meters: Meter[],
+  openModelPicker: () => void,
 ): RenderElement {
-  const { Box, Text } = ui;
+  const { Box, Button, Text } = ui;
   const columns = totalColumns - PANE_TOGGLE_COLUMNS;
-  const lead = [shortModel(model), effort].filter((label): label is string => !!label);
-  const leadWidth = lead.reduce((width, label) => width + label.length + CHIP_PADDING, 0);
+  const lead = [
+    { key: MODEL_CHIP_KEY, label: shortModel(model) },
+    { key: EFFORT_CHIP_KEY, label: effort },
+  ].filter((chip): chip is { key: string; label: string } => !!chip.label);
+  const leadWidth = lead.reduce((width, { label }) => width + label.length + CHIP_PADDING, 0);
   const path = tildePath(cwd, home);
   const layout = fittingLayout(meters, columns - leadWidth - CHIP_PADDING, path.length);
   const room = Math.max(columns - leadWidth - CHIP_PADDING - rightWidth(layout), MIN_PATH_COLUMNS);
   const { background, text } = chipColors(colorName);
-  const labels = [...lead, shortenPath(path, room)];
   return (
     <Box
       width={totalColumns}
@@ -71,11 +76,18 @@ export function promptInfoRow(
       justifyContent="space-between"
       alignItems="flex-end"
     >
-      <Text wrap="truncate-end">
-        {labels.map((label) => (
-          <Text key={label} color={text} backgroundColor={background}>{` ${label} `}</Text>
+      <Box flexDirection="row" flexShrink={1} overflow="hidden">
+        {lead.map(({ key, label }) => (
+          <Box key={key} flexShrink={0} backgroundColor={background}>
+            <Button key={key} label={` ${label} `} plain dimColor onPress={openModelPicker} />
+          </Box>
         ))}
-      </Text>
+        <Text
+          wrap="truncate-end"
+          color={text}
+          backgroundColor={background}
+        >{` ${shortenPath(path, room)} `}</Text>
+      </Box>
       {layout.meters.length === 0 ? null : meterText(ui, layout, accentOf(colorName))}
     </Box>
   );

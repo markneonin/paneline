@@ -6,6 +6,7 @@ import { withoutCleared } from "./clear-kit";
 import { filesTab } from "./files-draw";
 import { PANE } from "./pane-tab";
 import { isShownTab, justEntered } from "./shown-tab";
+import { isTerminal } from "./surface";
 
 export const FILES_TAB = { id: "files", label: "Files" };
 
@@ -27,6 +28,7 @@ let goneCheck: { key: string | null; gone: Set<string> } = { key: null, gone: ne
 
 export function registerFilesTab(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (!isShownTab(FILES_TAB.id)) return next(e);
     if (justEntered(FILES_TAB.id)) goneCheck = { key: null, gone: new Set() };
     const [allActivity, allAgentEdits, gitChanges, branches, folded, agents, home, cleared] =
