@@ -9,7 +9,7 @@ How paneline is wired. This page describes roles, not line numbers.
 - `registerSessionPane`: the pane shell (tab bar, tab choice). It is registered first, so it runs before the tab hooks.
 - `trackAgents`, `trackGit`, `trackPromptInfo`, `trackActivity`, `trackUsage`: record events into state.
 - `registerTabs`: one register function per tab.
-- `registerSessionCommand`: the `/session` command and opening the pane.
+- `registerSessionCommand`: the `/session` command and opening the pane on session start, unless the `autoOpen` option is off.
 - `renderChat`: draws chat messages, tool rows and the status row.
 - `registerProbe`: only when the `probe` option is on.
 

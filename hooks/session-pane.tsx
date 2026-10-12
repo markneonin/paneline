@@ -46,15 +46,15 @@ export function registerSessionPane(on: On): void {
   });
 }
 
-export function registerSessionCommand(on: On): void {
+export function registerSessionCommand(on: On, autoOpen: boolean): void {
   on("session.start", { isInteractive: true }, async ($, e, next) => {
     await $.command.register({ name: "session", description: "Open the Session side pane" });
-    void openPane($);
+    if (autoOpen) void openPane($);
     return next(e);
   });
 
   on("classic.SessionStart", { source: ["clear", "resume", "fork"] }, async ($, e, next) => {
-    void openPane($);
+    if (autoOpen) void openPane($);
     return next(e);
   });
 
