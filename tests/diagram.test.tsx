@@ -4,9 +4,11 @@ import type { On } from "claude-code";
 import { drawDiagram } from "../hooks/diagram";
 import { textList } from "../hooks/diagram-list";
 import { diagramPanel } from "../hooks/diagram-paint";
+import { WIDE_PAD } from "../hooks/diagram-source";
 import { fillsFor, palette } from "../hooks/palette";
 import { replyLook } from "../hooks/reply-look";
 import { accentOf } from "../hooks/session-color";
+import { displayWidth } from "../hooks/text-width";
 import { childrenOf, collect, diagramPanels, diagramRows } from "./draw-tree";
 
 type Reply = Mounted<"terminal", "AssistantMessage">;
@@ -38,6 +40,8 @@ const CHART = [
   '  y-axis "units" 0 --> 10',
   "  bar [3, 7, 5]",
 ].join("\n");
+
+const WIDE_FLOWCHART = ["flowchart LR", "  A[상태 줄] --> B[대화 꾸미기]"].join("\n");
 
 const GREEN = accentOf("green");
 const SINGLE_SERIES = [
@@ -346,6 +350,27 @@ describe("decision nodes", () => {
     expect(art).toContain("no");
   });
 });
+
+describe("wide characters", () => {
+  test("D27 a box around a label with wide characters closes at the same column on every row", async ($) => {
+    const rows = await drawnRows(await mountReply($, mermaid(WIDE_FLOWCHART), WIDE));
+    const top = rows.find((row) => row.includes("┐"))!;
+    const label = rows.find((row) => row.includes("상태 줄"))!;
+
+    expect(columnOf(label, "├")).toBe(columnOf(top, "┐"));
+  });
+
+  test("D28 a diagram with wide characters shows no placeholder character", async ($) => {
+    const rows = await drawnRows(await mountReply($, mermaid(WIDE_FLOWCHART), WIDE));
+
+    expect(rows.join("\n")).toContain("대화 꾸미기");
+    expect(rows.join("\n")).not.toContain(WIDE_PAD);
+  });
+});
+
+function columnOf(row: string, char: string): number {
+  return displayWidth(row.slice(0, row.indexOf(char)));
+}
 
 function drawnArt(source: string, columns = NARROW): string {
   const diagram = drawDiagram(source, columns);
