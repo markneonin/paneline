@@ -227,19 +227,19 @@ describe("the status row", () => {
     expect(rows.join("\n")).not.toContain("≡");
   });
 
-  test("R16 at 76 columns no bar is drawn and the context and 5h percents stay", async ($, on) => {
+  test("R16 at 76 columns the bars stay under the context and 5h percents", async ($, on) => {
     const rows = await bandOf($, on, FULL_READING, 76);
 
-    expect(rows.join("\n")).not.toMatch(ANY_BAR);
+    expect(rows.join("\n")).toMatch(ANY_BAR);
     expect(rows.join("\n")).toMatch(/≡ 72%\s+◷ 2h 48%/);
   });
 
-  test("R17 at 28 columns the 7d column is gone, the context percent stays and no bar is drawn", async ($, on) => {
+  test("R17 at 28 columns the 7d column is gone, the context percent and its bar stay", async ($, on) => {
     const rows = await bandOf($, on, FULL_READING, 28);
 
     expect(rows.join("\n")).toContain("≡ 72%");
     expect(rows.join("\n")).not.toContain("▦");
-    expect(rows.join("\n")).not.toMatch(ANY_BAR);
+    expect(rows.join("\n")).toMatch(ANY_BAR);
   });
 
   test("R18 a folder name longer than the row is cut from its start and the context percent still shows", async ($, on) => {

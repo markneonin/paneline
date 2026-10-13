@@ -141,10 +141,9 @@ function layoutsOf(meters: Meter[]): MeterLayout[] {
   if (meters.length === 0) return [];
   return [
     { meters, withBars: true, shortensPath: false },
-    { meters, withBars: false, shortensPath: false },
     ...DROP_STEPS.map((dropped) => ({
       meters: meters.filter((meter) => !dropped.includes(meter.label)),
-      withBars: false,
+      withBars: true,
       shortensPath: true,
     })),
   ];
