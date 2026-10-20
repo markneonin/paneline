@@ -6,6 +6,7 @@ import { agentsTab } from "./agents-draw";
 import { finishedKeys, withoutCleared } from "./agents-model";
 import { PANE } from "./pane-tab";
 import { isShownTab } from "./shown-tab";
+import { isTerminal } from "./surface";
 
 export const AGENTS_TAB = { id: "agents", label: "Agents" };
 
@@ -18,6 +19,7 @@ const sessionUsdAtom = atom(
 
 export function registerAgentsTab(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (!isShownTab(AGENTS_TAB.id)) return next(e);
     const [allAgents, sessionUsd, model, now, cleared] = await Promise.all([
       read($, agentsAtom),

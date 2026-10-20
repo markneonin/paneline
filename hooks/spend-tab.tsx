@@ -5,6 +5,7 @@ import { PANE } from "./pane-tab";
 import { isShownTab } from "./shown-tab";
 import { emptySpend, splitRows } from "./spend-model";
 import { spendTab } from "./spend-draw";
+import { isTerminal } from "./surface";
 
 export const SPEND_TAB = { id: "spend", label: "Spend" };
 
@@ -16,6 +17,7 @@ const sessionUsdAtom = atom(
 
 export function registerSpendTab(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (!isShownTab(SPEND_TAB.id)) return next(e);
     const [spend, sessionUsd] = await Promise.all([read($, spendAtom), read($, sessionUsdAtom)]);
     return spendTab($.ui.resolve(e), {

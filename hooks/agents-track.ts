@@ -29,6 +29,7 @@ import {
 import { forgetShownTab, isShownTab, justEntered } from "./shown-tab";
 import { folderName, isInside } from "./paths";
 import { targetOf } from "./tools";
+import { isTerminal } from "./surface";
 
 const FLUSH_DELAY_MS = 300;
 const POLL_MS = 1000;
@@ -130,6 +131,7 @@ export function trackAgents(on: On): void {
   });
 
   on("ui.render", { component: "Pane", requestId: PANE }, ($, e, next) => {
+    if (!isTerminal(e)) return next(e);
     if (justEntered(AGENTS_TAB.id)) void watchAgents($);
     return next(e);
   });
