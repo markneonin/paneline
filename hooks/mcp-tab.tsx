@@ -25,19 +25,20 @@ const toolUsesAtom = atom(
 const mcpSeenAtom = atom({ plugin: "paneline", key: "mcpSeen" } as const, [] as string[]);
 const mcpOpenAtom = atom({ plugin: "paneline", key: "mcpOpen" } as const, [] as string[]);
 const mcpQueuedAtom = atom({ plugin: "paneline", key: "mcpQueued" } as const, [] as string[]);
+const measureStampAtom = atom({ plugin: "paneline", key: "measureStamp" } as const, 0);
 
 const CLAUDE_CONFIG_FILE = ".claude.json";
 const PROJECT_MCP_FILE = ".mcp.json";
 
 type McpConfig = { disabled: string[]; scopes: ScopeIndex };
 
-let configured: McpConfig | null = null;
+let configured: Promise<McpConfig> | null = null;
 
 export function registerMcpTab(on: On): void {
   on("session.measure", async ($, e, next) => {
     if (e.changed.length === 0 && isShownTab(MCP_TAB.id)) {
       markContextStale();
-      $.ui.invalidate("ui.render");
+      await update($, measureStampAtom, (stamp) => stamp + 1);
     }
     return next(e);
   });
@@ -48,15 +49,16 @@ export function registerMcpTab(on: On): void {
       markContextStale();
       configured = null;
     }
+    await read($, measureStampAtom);
+    configured ??= loadConfig($);
     const [loaded, context, seen, queuedServers, openServers, toolUses] = await Promise.all([
-      configured ?? loadConfig($),
+      configured,
       mcpBreakdown((args) => $.session.usage(args)),
       read($, mcpSeenAtom),
       read($, mcpQueuedAtom),
       read($, mcpOpenAtom),
       read($, toolUsesAtom),
     ]);
-    configured = loaded;
     return mcpTab($.ui.resolve(e), {
       context,
       width: e.props.bodyColumns,
@@ -106,10 +108,9 @@ async function rememberServers(
 }
 
 async function finishMcp($: EngineInterface, server: string): Promise<void> {
-  await update($, mcpQueuedAtom, (list) => list.filter((name) => name !== server));
   configured = null;
   markContextStale();
-  $.ui.invalidate("ui.render");
+  await update($, mcpQueuedAtom, (list) => list.filter((name) => name !== server));
 }
 
 async function requestMcp(
@@ -126,7 +127,6 @@ async function requestMcp(
   }
   await rememberServers($, breakdown);
   await update($, mcpQueuedAtom, (list) => [...list, server]);
-  $.ui.invalidate("ui.render");
   void $.command
     .run({ command: "mcp", args: `${action} ${server}` })
     .catch((error: unknown) => $.ui.toast(`/mcp ${action} ${server} failed: ${String(error)}`))

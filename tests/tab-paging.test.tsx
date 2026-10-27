@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "claude-code/testing";
 import type { On } from "claude-code";
 import type { Engine, Mounted } from "claude-code/testing";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 type Node = { type: string; props?: Record<string, unknown>; children?: unknown };
@@ -13,10 +14,10 @@ const PANE_ROWS = 40;
 const ACTIVE_TAB_TEXT = "clawd_background";
 const LEFT_ARROW = "‹";
 const RIGHT_ARROW = "›";
-const ALL_TABS = ["Activity", "Files", "Agents", "Context", "MCP", "Skills", "Spend"];
+const ALL_TABS = ["Activity", "Files", "Agents", "Plan", "Context", "MCP", "Skills", "Spend"];
 const FIRST_PAGE = ["Activity", "Files", "Agents"];
-const SECOND_PAGE = ["Context", "MCP", "Skills"];
-const LAST_PAGE = ["Spend"];
+const SECOND_PAGE = ["Plan", "Context", "MCP"];
+const LAST_PAGE = ["Skills", "Spend"];
 
 describe("tab bar paging", () => {
   test("P1 a narrow pane opens on Activity with Files and Agents beside it and only a right arrow", async ($, on) => {
@@ -41,7 +42,7 @@ describe("tab bar paging", () => {
     const after = await barOf(pane);
     expect(after).toEqual({
       tabs: SECOND_PAGE,
-      selected: "Context",
+      selected: "Plan",
       arrows: [LEFT_ARROW, RIGHT_ARROW],
     });
     expect(after.tabs.filter((name) => before.tabs.includes(name))).toEqual([]);
@@ -61,7 +62,7 @@ describe("tab bar paging", () => {
     });
   });
 
-  test("P4 pressing the right arrow twice shows the last tab alone, selected, with no right arrow", async ($, on) => {
+  test("P4 pressing the right arrow twice shows the last two tabs, the first selected, with no right arrow", async ($, on) => {
     worldOf(on);
     const pane = await mountPane($, NARROW_COLUMNS);
 
@@ -70,12 +71,12 @@ describe("tab bar paging", () => {
 
     expect(await barOf(pane)).toEqual({
       tabs: LAST_PAGE,
-      selected: "Spend",
+      selected: "Skills",
       arrows: [LEFT_ARROW],
     });
   });
 
-  test("P5 pressing the left arrow on the last page brings the second page back with Context selected", async ($, on) => {
+  test("P5 pressing the left arrow on the last page brings the second page back with Plan selected", async ($, on) => {
     worldOf(on);
     const pane = await mountPane($, NARROW_COLUMNS);
     await press(pane, RIGHT_ARROW);
@@ -85,12 +86,12 @@ describe("tab bar paging", () => {
 
     expect(await barOf(pane)).toEqual({
       tabs: SECOND_PAGE,
-      selected: "Context",
+      selected: "Plan",
       arrows: [LEFT_ARROW, RIGHT_ARROW],
     });
   });
 
-  test("P6 a wide pane shows all seven tabs with Activity selected and no arrows", async ($, on) => {
+  test("P6 a wide pane shows all eight tabs with Activity selected and no arrows", async ($, on) => {
     worldOf(on);
 
     const pane = await mountPane($, WIDE_COLUMNS);
@@ -98,7 +99,7 @@ describe("tab bar paging", () => {
     expect(await barOf(pane)).toEqual({ tabs: ALL_TABS, selected: "Activity", arrows: [] });
   });
 
-  test("P7 after clicking Agents the right arrow shows the hidden tabs and selects Context", async ($, on) => {
+  test("P7 after clicking Agents the right arrow shows the hidden tabs and selects Plan", async ($, on) => {
     worldOf(on);
     const pane = await mountPane($, NARROW_COLUMNS);
     await press(pane, "Agents");
@@ -107,7 +108,7 @@ describe("tab bar paging", () => {
 
     expect(await barOf(pane)).toEqual({
       tabs: SECOND_PAGE,
-      selected: "Context",
+      selected: "Plan",
       arrows: [LEFT_ARROW, RIGHT_ARROW],
     });
   });
@@ -138,7 +139,7 @@ describe("tab bar paging", () => {
     expect(bar.tabs).toContain("Agents");
   });
 
-  test("P10 clicking a tab in a wide pane selects it and the bar still shows all seven tabs with no arrows", async ($, on) => {
+  test("P10 clicking a tab in a wide pane selects it and the bar still shows all eight tabs with no arrows", async ($, on) => {
     worldOf(on);
     const pane = await mountPane($, WIDE_COLUMNS);
 
@@ -217,7 +218,7 @@ function barRow(node: Node): Node | undefined {
 
 function isSelectedTab(tab: Node): boolean {
   return childrenOf(tab).some(
-    (part) => part.props?.bold === true && part.props.color === ACTIVE_TAB_TEXT,
+    (part) => isHeavy(part.props) && part.props?.color === ACTIVE_TAB_TEXT,
   );
 }
 

@@ -1,0 +1,125 @@
+#!/bin/sh
+updates=$(cat)
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 0
+REF_UPDATES="$updates" python3 - "$1" "$common" >/dev/null <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tomllib
+from datetime import datetime
+from pathlib import Path
+
+CONFIG_NAME = ".ticket.toml"
+LOG_NAME = "ticket-hook.log"
+MAP_NAME = "tickets-map.json"
+BRANCH_REF_PREFIX = "refs/heads/"
+RECONCILE_COMMIT_PREFIX = "chore(tickets)"
+SPECIAL_BRANCHES = {"HEAD"}
+TICKET_ID = re.compile(r"\b(?:TASK-(\d+(?:\.\d+)?)|GH-(\d+))\b", re.IGNORECASE)
+STATUS_LINE = re.compile(r"^status:\s*(.*?)\s*$", re.MULTILINE)
+
+
+def main() -> None:
+    state = sys.argv[1]
+    common_dir = Path(sys.argv[2])
+    root = common_dir.parent
+    config = root / CONFIG_NAME
+    if state not in ("prepared", "committed") or not config.is_file():
+        return
+    try:
+        settings = tomllib.loads(config.read_text(encoding="utf-8"))
+        base = settings.get("base", "main")
+        backend = settings.get("backend", "backlog")
+        updates = [line.split() for line in os.environ.get("REF_UPDATES", "").splitlines() if line.strip()]
+        if state == "prepared":
+            refuse_untracked_branches(root, base, backend, updates)
+        else:
+            reconcile_after_base_move(root, base, updates, common_dir / LOG_NAME)
+    except Exception as error:
+        log(common_dir / LOG_NAME, f"hook failed: {type(error).__name__}: {error}")
+
+
+def refuse_untracked_branches(root: Path, base: str, backend: str, updates: list[list[str]]) -> None:
+    for old, new, ref in updates:
+        if not is_null(old) or is_null(new) or not ref.startswith(BRANCH_REF_PREFIX):
+            continue
+        name = ref.removeprefix(BRANCH_REF_PREFIX)
+        if name == base or name in SPECIAL_BRANCHES or carries_open_ticket(root, backend, name):
+            continue
+        print(
+            f"ticket: branch '{name}' carries no open ticket ID (TASK-<n> or GH-<n>); "
+            "run `ticket start <id>` or `ticket create ...` first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def carries_open_ticket(root: Path, backend: str, name: str) -> bool:
+    return any(is_open(root, backend, mention) for mention in TICKET_ID.finditer(name))
+
+
+def is_open(root: Path, backend: str, mention: re.Match[str]) -> bool:
+    if mention[2]:
+        return backend == "github"
+    if backend == "github":
+        return f"TASK-{mention[1]}" in read_map(root)
+    for ticket in (root / "backlog" / "tasks").glob(f"task-{mention[1]} - *.md"):
+        status = STATUS_LINE.search(ticket.read_text(encoding="utf-8"))
+        return status is None or status[1].strip("'\"").lower() != "done"
+    return False
+
+
+def read_map(root: Path) -> dict[str, str]:
+    path = root / MAP_NAME
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+
+
+def reconcile_after_base_move(root: Path, base: str, updates: list[list[str]], log_path: Path) -> None:
+    for old, new, ref in updates:
+        if ref == BRANCH_REF_PREFIX + base and is_moved(old, new) and not is_ticket_commit(root, new):
+            reconcile_detached(root, log_path)
+
+
+def is_ticket_commit(root: Path, commit: str) -> bool:
+    subject = subprocess.run(
+        ["git", "-C", str(root), "log", "-1", "--format=%s", commit],
+        capture_output=True, text=True, check=False,
+    ).stdout
+    return subject.startswith(RECONCILE_COMMIT_PREFIX)
+
+
+def reconcile_detached(root: Path, log_path: Path) -> None:
+    with log_path.open("ab") as log_file:
+        subprocess.Popen(
+            ["ticket", "reconcile", "--quiet"],
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+
+def log(log_path: Path, message: str) -> None:
+    stamp = datetime.now().isoformat(timespec="seconds")
+    with log_path.open("a") as log_file:
+        log_file.write(f"{stamp} {message}\n")
+
+
+def is_null(sha: str) -> bool:
+    return set(sha) == {"0"}
+
+
+def is_moved(old: str, new: str) -> bool:
+    return not is_null(old) and not is_null(new) and old != new
+
+
+main()
+PY
+status=$?
+[ "$1" = prepared ] && exit "$status"
+exit 0

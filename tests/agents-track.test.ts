@@ -12,7 +12,7 @@ import type { Engine, MockClock } from "claude-code/testing";
 
 import type { AgentNode, AgentTree } from "../hooks/agents-model";
 
-const FLUSH_MS = 300;
+const FLUSH_MS = 1_000;
 const START = 1_000;
 const RESOLVED_MODEL = "claude-resolved-model";
 const ENGINE = { plugin: "engine", tier: "core" } as const;
@@ -27,7 +27,7 @@ const STEP_USAGE: TurnUsage = {
 };
 
 describe("subagent tracking", () => {
-  test("A1 a started subagent shows up in the tab data 300 ms later, in one update, with what the engine chose", async ($, on) => {
+  test("A1 a started subagent shows up in the tab data 1 s later, in one update, with what the engine chose", async ($, on) => {
     const world = engineBeneath(on);
     world.answerSpawnsWith({ model: RESOLVED_MODEL, agentId: SUBAGENT });
 
@@ -156,7 +156,7 @@ describe("subagent tracking", () => {
 });
 
 describe("update batching", () => {
-  test("A2 20 subagent tool calls inside 300 ms give one update", async ($, on) => {
+  test("A2 20 subagent tool calls inside 1 s give one update", async ($, on) => {
     const world = engineBeneath(on);
     await world.spawnSubagent($);
     await world.clock.advance(FLUSH_MS);
@@ -180,7 +180,7 @@ describe("update batching", () => {
     expect(world.updatesTo("sessionUsd")).toEqual([0.42]);
   });
 
-  test("A13 two subagents started inside 300 ms give one update, and later activity gives a new one", async ($, on) => {
+  test("A13 two subagents started inside 1 s give one update, and later activity gives a new one", async ($, on) => {
     const world = engineBeneath(on);
 
     await world.spawnSubagent($);
@@ -304,6 +304,13 @@ function engineBeneath(on: On): TrackerWorld {
     updates.push({ key, value: e.value });
     return { value: { isSet: true, version } };
   });
+  const kept = new Map<string, unknown>();
+  on("store.get", (_$, e) => ({ value: kept.get(e.key) }));
+  on("store.set", (_$, e) => {
+    kept.set(e.key, JSON.parse(JSON.stringify(e.value)));
+    return { value: undefined };
+  });
+  on("session.id", () => ({ value: "session-one" }));
   on("session.usage", () => ({
     value: {
       startedAt: START,

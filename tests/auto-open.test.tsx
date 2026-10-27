@@ -47,21 +47,21 @@ describe("auto open", () => {
     },
   );
 
-  test("O4 with auto open off, /session still opens the pane", AUTO_OPEN_OFF, async ($, on) => {
+  test("O4 with auto open off, /paneline still opens the pane", AUTO_OPEN_OFF, async ($, on) => {
     const world = worldOf(on);
     await $.session.start(SESSION_START);
     await world.settle();
 
-    await runSession($);
+    await runPaneline($);
     await world.settle();
 
     expect(world.opened).toEqual(["session"]);
   });
 });
 
-function runSession($: Engine) {
+function runPaneline($: Engine) {
   return $.command.run({
-    command: "session",
+    command: "paneline",
     args: "",
     origin: { kind: "composer" },
     presentation: { isFullscreen: false, columns: 100 },

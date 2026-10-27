@@ -16,6 +16,7 @@ import {
 } from "./clear-world";
 
 const EMPTY_TEXT = "No files touched yet.";
+const AGENT_EDIT_BATCH_MS = 1_000;
 
 describe("files clear button", () => {
   test("F1 after some files were touched the Files heading line ends with a dim clear button", async ($, on) => {
@@ -89,10 +90,12 @@ describe("files clear button", () => {
     const world = worldOf(on);
     const agent = await spawnAgent($, world, "alpha");
     await editFile($, world, "/work/before.ts", 5, 1, agent);
+    await world.clock.advance(AGENT_EDIT_BATCH_MS);
     const pane = await paneOnTab($, "Files");
     await pressClear(pane, world);
 
     await editFile($, world, "/work/after.ts", 2, 0, agent);
+    await world.clock.advance(AGENT_EDIT_BATCH_MS);
 
     const shown = await texts(pane);
     expect(shown.some((text) => text.includes("before.ts"))).toBe(false);

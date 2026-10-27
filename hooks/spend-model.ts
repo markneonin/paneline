@@ -42,16 +42,83 @@ type Price = {
   cacheRead: number;
 };
 
-const PRICES: readonly (Price & { match: string })[] = [
-  { match: "opus-5-5", input: 4, output: 20, cacheWrite: { "5m": 5, "1h": 8 }, cacheRead: 0.2 },
-  { match: "sonnet-5-5", input: 2, output: 10, cacheWrite: { "5m": 2.5, "1h": 4 }, cacheRead: 0.2 },
-  { match: "haiku-4-5", input: 1, output: 5, cacheWrite: { "5m": 1.25, "1h": 2 }, cacheRead: 0.1 },
+type PriceRow = Price & {
+  match: string;
+  longPrompt?: { aboveTokens: number; price: Price };
+};
+
+const PRICES: readonly PriceRow[] = [
   {
     match: "fable-5-1",
     input: 10,
     output: 50,
     cacheWrite: { "5m": 12.5, "1h": 20 },
     cacheRead: 0.25,
+  },
+  {
+    match: "mythos-5-1",
+    input: 10,
+    output: 50,
+    cacheWrite: { "5m": 12.5, "1h": 20 },
+    cacheRead: 0.25,
+  },
+  { match: "fable-5", input: 10, output: 50, cacheWrite: { "5m": 12.5, "1h": 20 }, cacheRead: 1 },
+  { match: "mythos-5", input: 10, output: 50, cacheWrite: { "5m": 12.5, "1h": 20 }, cacheRead: 1 },
+  { match: "opus-5-5", input: 4, output: 20, cacheWrite: { "5m": 5, "1h": 8 }, cacheRead: 0.2 },
+  {
+    match: "opus-5",
+    input: 5,
+    output: 25,
+    cacheWrite: { "5m": 6.25, "1h": 10 },
+    cacheRead: 0.5,
+  },
+  { match: "opus-4-8", input: 5, output: 25, cacheWrite: { "5m": 6.25, "1h": 10 }, cacheRead: 0.5 },
+  { match: "opus-4-7", input: 5, output: 25, cacheWrite: { "5m": 6.25, "1h": 10 }, cacheRead: 0.5 },
+  { match: "opus-4-6", input: 5, output: 25, cacheWrite: { "5m": 6.25, "1h": 10 }, cacheRead: 0.5 },
+  { match: "opus-4-5", input: 5, output: 25, cacheWrite: { "5m": 6.25, "1h": 10 }, cacheRead: 0.5 },
+  {
+    match: "opus-4-1",
+    input: 15,
+    output: 75,
+    cacheWrite: { "5m": 18.75, "1h": 30 },
+    cacheRead: 1.5,
+  },
+  { match: "opus-4", input: 15, output: 75, cacheWrite: { "5m": 18.75, "1h": 30 }, cacheRead: 1.5 },
+  { match: "sonnet-5-5", input: 2, output: 10, cacheWrite: { "5m": 2.5, "1h": 4 }, cacheRead: 0.1 },
+  { match: "sonnet-5", input: 2, output: 10, cacheWrite: { "5m": 2.5, "1h": 4 }, cacheRead: 0.2 },
+  {
+    match: "sonnet-4-6",
+    input: 3,
+    output: 15,
+    cacheWrite: { "5m": 3.75, "1h": 6 },
+    cacheRead: 0.3,
+  },
+  {
+    match: "sonnet-4-5",
+    input: 3,
+    output: 15,
+    cacheWrite: { "5m": 3.75, "1h": 6 },
+    cacheRead: 0.3,
+  },
+  { match: "sonnet-4", input: 3, output: 15, cacheWrite: { "5m": 3.75, "1h": 6 }, cacheRead: 0.3 },
+  {
+    match: "haiku-5-5",
+    input: 0.1,
+    output: 0.5,
+    cacheWrite: { "5m": 0.125, "1h": 0.2 },
+    cacheRead: 0.01,
+    longPrompt: {
+      aboveTokens: 100_000,
+      price: { input: 0.5, output: 2.5, cacheWrite: { "5m": 0.625, "1h": 1 }, cacheRead: 0.05 },
+    },
+  },
+  { match: "haiku-4-5", input: 1, output: 5, cacheWrite: { "5m": 1.25, "1h": 2 }, cacheRead: 0.1 },
+  {
+    match: "haiku-3-5",
+    input: 0.8,
+    output: 4,
+    cacheWrite: { "5m": 1, "1h": 1.6 },
+    cacheRead: 0.08,
   },
 ];
 
@@ -98,6 +165,8 @@ export function emptySpend(): SpendState {
     rentTokens: 0,
     rent: [],
     isCompacted: false,
+    growthSum: 0,
+    growthCount: 0,
     mainCacheTtl: null,
     baselineUsd: null,
     mainMemory: null,
@@ -139,7 +208,7 @@ function savedSpend(saved: unknown): Record<string, SpendState> {
 }
 
 export function afterCompaction(state: SpendState): SpendState {
-  return { ...state, rentTokens: 0, rent: [], isCompacted: true };
+  return { ...state, rentTokens: 0, rent: [], isCompacted: true, growthSum: 0, growthCount: 0 };
 }
 
 export function afterMainTurn(state: SpendState, turn: MainTurn): SpendState {
@@ -147,11 +216,24 @@ export function afterMainTurn(state: SpendState, turn: MainTurn): SpendState {
   const counted = {
     ...withUsage(state, MAIN_OWNER, turn.usage, ttl),
     mainModel: turn.usage.model,
+    ...withGrowth(state, turn.context),
     isCompacted: false,
-    mainMemory: { model: turn.usage.model, endedAt: turn.endedAt, size: turn.context },
+    mainMemory: { model: turn.usage.model, endedAt: turn.endedAt, size: turn.context, ttl },
   };
   const miss = mainMiss(state, turn, ttl);
   return miss === null ? counted : withMiss(counted, miss);
+}
+
+function withGrowth(
+  state: SpendState,
+  size: number | undefined,
+): Pick<SpendState, "growthSum" | "growthCount"> {
+  const previous = state.mainMemory?.size;
+  const growth = size === undefined || previous === undefined ? 0 : size - previous;
+  if (state.isCompacted || growth <= 0) {
+    return { growthSum: state.growthSum, growthCount: state.growthCount };
+  }
+  return { growthSum: state.growthSum + growth, growthCount: state.growthCount + 1 };
 }
 
 export function afterAgentRequest(
@@ -224,7 +306,7 @@ export function splitRows(state: SpendState, sessionUsd: number | null): SplitRo
 function withUsage(state: SpendState, owner: string, usage: TurnUsage, ttl: CacheTtl): SpendState {
   const current = state.owners[owner] ?? NO_OWNER;
   const tokens = totalTokens(usage);
-  const price = priceOf(usage.model);
+  const price = priceOf(usage);
   const next: SpendOwner =
     price === undefined
       ? { ...current, unpricedTokens: current.unpricedTokens + tokens }
@@ -318,7 +400,7 @@ function missOf(
   ttl: CacheTtl,
   at: number,
 ): SpendMiss {
-  const price = priceOf(usage.model);
+  const price = priceOf(usage);
   const usd =
     price === undefined
       ? null
@@ -326,8 +408,15 @@ function missOf(
   return { at, cause, rebuilt, usd };
 }
 
-function priceOf(model: string): Price | undefined {
-  return PRICES.find(({ match }) => model.includes(match));
+function priceOf(usage: TurnUsage): Price | undefined {
+  const row = PRICES.filter(({ match }) => usage.model.includes(match)).sort(
+    (left, right) => right.match.length - left.match.length,
+  )[0];
+  if (row === undefined) return undefined;
+  const { longPrompt } = row;
+  return longPrompt !== undefined && promptOf(usage) > longPrompt.aboveTokens
+    ? longPrompt.price
+    : row;
 }
 
 function weightOf(usage: TurnUsage, price: Price, ttl: CacheTtl): number {

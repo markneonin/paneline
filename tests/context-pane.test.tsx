@@ -227,6 +227,19 @@ describe("context tab work", () => {
     expect(afterMeasure).toBe(2);
     expect(asked()).toBe(2);
   });
+
+  test("C11 a measure while the tab is open redraws the header with the new usage, with no press or redraw", async ($, on) => {
+    const fixture = { ...FIXTURE };
+    worldOf(on, fixture);
+    const pane = await paneOnTab($, "Context");
+    expect(await rowTexts(pane)).toContain("48k/200k tokens (24%)");
+    fixture.totalTokens = 96_000;
+    fixture.percentage = 48;
+
+    await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ["context"] });
+
+    expect(await rowTexts(pane)).toContain("96k/200k tokens (48%)");
+  });
 });
 
 describe("context tab grid size", () => {
@@ -255,7 +268,7 @@ describe("tab bar", () => {
   });
 });
 
-function worldOf(on: On): UsageCall[] {
+function worldOf(on: On, fixture: typeof FIXTURE = FIXTURE): UsageCall[] {
   const calls: UsageCall[] = [];
   mock.clock(on, { now: NOW });
   mock.env(on, { HOME: "/h/u" });
@@ -264,7 +277,7 @@ function worldOf(on: On): UsageCall[] {
   on("session.usage", (_$, e) => {
     calls.push({ breakdown: e.breakdown, columns: e.columns });
     const context =
-      e.breakdown === undefined ? { window: 200_000 } : { window: 200_000, breakdown: FIXTURE };
+      e.breakdown === undefined ? { window: 200_000 } : { window: 200_000, breakdown: fixture };
     return { value: { startedAt: 0, context, rateLimits: [] } };
   });
   on("session.measure", (_$, e) => ({ changed: e.changed }));

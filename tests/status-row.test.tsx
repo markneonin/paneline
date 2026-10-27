@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "claude-code/testing";
-import type { On } from "claude-code";
+import type { On, SessionContextBreakdown } from "claude-code";
 import type { Engine } from "claude-code/testing";
 
 import { accentOf, ENGINE_DEFAULT_GREY } from "../hooks/session-color";
@@ -16,13 +16,70 @@ const NOW = 1_800_000_000_000;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
+const THIRTY_SECONDS_MS = 30_000;
+const WINDOW = 200_000;
+const TOKENS_PER_PERCENT = WINDOW / 100;
 const WIDE = 200;
+const SHOT_COLUMNS = 120;
 const CHIPS = " opus 5.5  high  ~/workspace/projects/paneline ";
 const BAR_CELLS = /[▰▱]+/g;
 const COLUMN_TEXTS = /[≡◷▦][^≡◷▦]*?\d+%/g;
 const ANY_BAR = /[▰▱]/;
 const ANY_METER_CELL = /[≡◷▦▰▱%]/;
+const TASK_METER_CELL = /[◆≡◷▦▰▱%]/;
+const LEADING_BAR = /^[▰▱]*/;
+const TASK_BAR_CELLS = 5;
 const OLD_LOOK = /ctx|5h|7d|↺|[▁▂▃▄▅▆▇█]/;
+
+type Progress = {
+  tasks: Record<string, { status: "pending" | "in_progress" | "completed"; title: string }>;
+  percent: number | null;
+  callsSinceNote: number;
+};
+
+function task(status: "pending" | "in_progress" | "completed"): Progress["tasks"][string] {
+  return { status, title: "a task" };
+}
+
+const THREE_OF_FIVE: Progress = {
+  tasks: {
+    "1": task("completed"),
+    "2": task("completed"),
+    "3": task("completed"),
+    "4": task("in_progress"),
+    "5": task("pending"),
+  },
+  percent: null,
+  callsSinceNote: 0,
+};
+const NO_TASKS: Progress = { tasks: {}, percent: null, callsSinceNote: 0 };
+const ONE_OF_TWO: Progress = {
+  tasks: { "1": task("completed"), "2": task("pending") },
+  percent: null,
+  callsSinceNote: 0,
+};
+const ALL_DONE: Progress = {
+  tasks: {
+    "1": task("completed"),
+    "2": task("completed"),
+    "3": task("completed"),
+    "4": task("completed"),
+    "5": task("completed"),
+  },
+  percent: null,
+  callsSinceNote: 0,
+};
+const ALL_PENDING: Progress = {
+  tasks: {
+    "1": task("pending"),
+    "2": task("pending"),
+    "3": task("pending"),
+    "4": task("pending"),
+    "5": task("pending"),
+  },
+  percent: null,
+  callsSinceNote: 0,
+};
 
 type Limit = { percentUsed: number; resetsInMs?: number };
 type Reading = { context?: number; five?: Limit; seven?: Limit };
@@ -186,6 +243,72 @@ describe("the status row", () => {
     expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([GREY]));
   });
 
+  test("R23 a 5h reset time that has passed reads 0% with no time and an empty bar", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      { ...FULL_READING, five: { percentUsed: 48, resetsInMs: -2 * HOUR_MS } },
+      WIDE,
+    );
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 0%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▱▱▱▱   ▰▰▰▰▰▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R24 a 7d reset time that passed 30 seconds ago reads 0% with no time and an empty bar", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      { ...FULL_READING, seven: { percentUsed: 59, resetsInMs: -THIRTY_SECONDS_MS } },
+      WIDE,
+    );
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 2h 48%   ▦ 0%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▰▰▰▰▱▱▱▱   ▱▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R25 a reading with no limits keeps the 5h and 7d meters at their last values", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, FULL_READING);
+    await measure($, { context: 40 });
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 40%   ◷ 2h 48%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R26 a reading with only a new 5h value replaces the 5h meter, keeps the 7d meter and leaves it on the right", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, FULL_READING);
+    await measure($, { context: 72, five: { percentUsed: 30, resetsInMs: 2 * HOUR_MS } });
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 2h 30%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R27 clearing the session keeps the 5h and 7d meters when the refresh reports no limits", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, FULL_READING);
+
+    await $.classic.SessionStart({ source: "clear" });
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`◷ 2h 48%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R28 a kept 5h meter whose reset time has passed reads 0%", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, FULL_READING);
+    await measure($, { context: 72 });
+    await world.clock.advance(3 * HOUR_MS);
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 0%   ▦ 2d 59%${PANE_TOGGLE}`)).toBe(true);
+  });
+
   test("R10 at 0% the context bar has no filled cell", async ($, on) => {
     const rows = await bandOf($, on, { ...FULL_READING, context: 0 }, WIDE);
 
@@ -242,6 +365,58 @@ describe("the status row", () => {
     expect(rows.join("\n")).toMatch(ANY_BAR);
   });
 
+  test("R21 the task meter is the first meter, in the same accent, with 5 cells under it", async ($, on) => {
+    const world = worldOf(on, { colorEntries: ["red"], progress: THREE_OF_FIVE });
+    await startWith($, world, FULL_READING, TRANSCRIPT);
+
+    const drawn = await mountBand($, WIDE);
+    const shown = colouredPieces(drawn).filter(({ text }) => TASK_METER_CELL.test(text));
+    const rows = screenRows(drawn, WIDE);
+
+    expect(rows[2]?.endsWith(`◆ 60%    ≡ 72%   ◷ 2h 48%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▱▱    ▰▰▰▰▱   ▰▰▰▰▱▱▱▱   ▰▰▰▰▰▱▱▱${PANE_TOGGLE}`)).toBe(true);
+    expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([RED]));
+  });
+
+  test("R22 at 28 columns the task meter and the context stay and the 7d column is gone", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, 28, { progress: THREE_OF_FIVE });
+
+    expect(rows.join("\n")).toContain("◆ 60%");
+    expect(rows.join("\n")).toContain("≡ 72%");
+    expect(rows.join("\n")).not.toContain("▦");
+  });
+
+  test("R30 three finished tasks of five show 60% over three filled cells of five", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, {
+      progress: { ...THREE_OF_FIVE, percent: 20 },
+    });
+
+    expect(rows[2]?.endsWith(`◆ 60%    ≡ 72%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▱▱    ▰▰▰▰▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R31 with no task list a reported 40% shows 40% over two filled cells of five", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, {
+      progress: { ...NO_TASKS, percent: 40 },
+    });
+
+    expect(rows[2]?.endsWith(`◆ 40%    ≡ 72%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▱▱▱    ▰▰▰▰▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R29 once the task list is emptied and no percent is left the task meter disappears", async ($, on) => {
+    const world = worldOf(on, { progress: ONE_OF_TWO });
+    await startWith($, world, { context: 72 });
+    const before = screenRows(await mountBand($, WIDE), WIDE);
+
+    world.setProgress(NO_TASKS);
+    const after = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(before[2]?.endsWith(`◆ 50%    ≡ 72%${PANE_TOGGLE}`)).toBe(true);
+    expect(after.join("\n")).not.toContain("◆");
+    expect(after[2]?.endsWith(`≡ 72%${PANE_TOGGLE}`)).toBe(true);
+  });
+
   test("R18 a folder name longer than the row is cut from its start and the context percent still shows", async ($, on) => {
     const rows = await bandOf($, on, FULL_READING, 56, { cwd: `${HOME}/${"x".repeat(60)}` });
 
@@ -249,7 +424,124 @@ describe("the status row", () => {
     expect(rows.join("\n")).toContain("…xxx");
     expect(rows.join("\n")).toContain("≡ 72%");
   });
+
+  test("PB1 at 0% the task bar is 5 cells under the ◆ text", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, { progress: ALL_PENDING });
+
+    expect(rows[2]).toContain("◆ 0%");
+    expect(barStartingAt(rows, "◆ 0%")).toHaveLength(TASK_BAR_CELLS);
+  });
+
+  test("PB1 at 5% the task bar is 5 cells under the ◆ text", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, {
+      progress: { ...NO_TASKS, percent: 5 },
+    });
+
+    expect(rows[2]).toContain("◆ 5%");
+    expect(barStartingAt(rows, "◆ 5%")).toHaveLength(TASK_BAR_CELLS);
+  });
+
+  test("PB1 at 60% the task bar is 5 cells under the ◆ text", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, { progress: THREE_OF_FIVE });
+
+    expect(rows[2]).toContain("◆ 60%");
+    expect(barStartingAt(rows, "◆ 60%")).toHaveLength(TASK_BAR_CELLS);
+  });
+
+  test("PB1 at 100% the task bar is 5 cells under the ◆ text", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, { progress: ALL_DONE });
+
+    expect(rows[2]).toContain("◆ 100%");
+    expect(barStartingAt(rows, "◆ 100%")).toHaveLength(TASK_BAR_CELLS);
+  });
+
+  test("PB2 at 0% the task bar shows no filled cell", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, { progress: ALL_PENDING });
+
+    expect(barStartingAt(rows, "◆ 0%")).toBe("▱▱▱▱▱");
+  });
+
+  test("PB2 at 60% the task bar shows three filled cells of five", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, { progress: THREE_OF_FIVE });
+
+    expect(barStartingAt(rows, "◆ 60%")).toBe("▰▰▰▱▱");
+  });
+
+  test("PB2 at 100% the task bar has no empty cell", async ($, on) => {
+    const rows = await bandOf($, on, { context: 72 }, WIDE, { progress: ALL_DONE });
+
+    expect(barStartingAt(rows, "◆ 100%")).toBe("▰▰▰▰▰");
+  });
+
+  test("PB3 at 100% the context, 5h and 7d texts and bars keep their places and widths", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, WIDE, { progress: ALL_DONE });
+
+    expect(rows[2]?.endsWith(`◆ 100%   ≡ 72%   ◷ 2h 48%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+    expect(barStartingAt(rows, "≡ 72%")).toBe("▰▰▰▰▱");
+    expect(barStartingAt(rows, "◷ 2h 48%")).toBe("▰▰▰▰▱▱▱▱");
+    expect(barStartingAt(rows, "▦ 3d 59%")).toBe("▰▰▰▰▰▱▱▱");
+  });
+
+  test("PB4 at 28 columns the ◆ meter stays with its percent, next to the context", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, 28, { progress: ALL_DONE });
+
+    expect(rows[2]).toContain("◆ 100%   ≡ 72%");
+  });
+
+  test("PL3 at 5% the status row keeps every piece in its place as at 0%", async ($, on) => {
+    const { before, after } = await rowsAtTwoPercents($, on, ALL_PENDING, {
+      ...NO_TASKS,
+      percent: 5,
+    });
+
+    expect(shapeOf(after[3] ?? "")).toBe(shapeOf(before[3] ?? ""));
+    expect(after[2]?.indexOf("≡ 72%")).toBe(before[2]?.indexOf("≡ 72%"));
+  });
+
+  test("PL3 at 60% the status row keeps every piece in its place as at 0%", async ($, on) => {
+    const { before, after } = await rowsAtTwoPercents($, on, ALL_PENDING, THREE_OF_FIVE);
+
+    expect(shapeOf(after[3] ?? "")).toBe(shapeOf(before[3] ?? ""));
+    expect(after[2]?.indexOf("≡ 72%")).toBe(before[2]?.indexOf("≡ 72%"));
+  });
+
+  test("PL3 at 100% the status row keeps every piece in its place as at 0%", async ($, on) => {
+    const { before, after } = await rowsAtTwoPercents($, on, ALL_PENDING, ALL_DONE);
+
+    expect(shapeOf(after[3] ?? "")).toBe(shapeOf(before[3] ?? ""));
+    expect(after[2]?.indexOf("≡ 72%")).toBe(before[2]?.indexOf("≡ 72%"));
+  });
+
+  test("PL4 at 100% in a 120-column pane the task bar has five filled cells", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, SHOT_COLUMNS, { progress: ALL_DONE });
+
+    expect(rows[2]).toContain("◆ 100%");
+    expect(barStartingAt(rows, "◆ 100%")).toBe("▰▰▰▰▰");
+  });
 });
+
+function shapeOf(row: string): string {
+  return row.replace(BAR_CELLS, "#");
+}
+
+async function rowsAtTwoPercents(
+  $: Engine,
+  on: On,
+  first: Progress,
+  second: Progress,
+): Promise<{ before: string[]; after: string[] }> {
+  const world = worldOf(on, { progress: first });
+  await startWith($, world, FULL_READING);
+  const before = screenRows(await mountBand($, SHOT_COLUMNS), SHOT_COLUMNS);
+  world.setProgress(second);
+  const after = screenRows(await mountBand($, SHOT_COLUMNS), SHOT_COLUMNS);
+  return { before, after };
+}
+
+function barStartingAt(rows: string[], text: string): string {
+  const column = (rows[2] ?? "").indexOf(text);
+  return LEADING_BAR.exec((rows[3] ?? "").slice(column))?.[0] ?? "";
+}
 
 async function bandOf(
   $: Engine,
@@ -294,18 +586,34 @@ async function meterPieces($: Engine): Promise<{ text: string; color: unknown }[
   return colouredPieces(await mountBand($, WIDE)).filter(({ text }) => ANY_METER_CELL.test(text));
 }
 
-type WorldOptions = { cwd?: string; engineRow?: string; colorEntries?: string[] };
+type WorldOptions = {
+  cwd?: string;
+  engineRow?: string;
+  colorEntries?: string[];
+  progress?: Progress;
+};
 
 function worldOf(on: On, options: WorldOptions = {}) {
   const clock = mock.clock(on, { now: NOW });
   const cwd = options.cwd ?? PROJECT;
   const engineRow = options.engineRow ?? "engine row";
   const colorEntries = options.colorEntries ?? [];
+  let progress = options.progress ?? NO_TASKS;
   mock.env(on, { HOME });
+  on("state.get", (_$, e, next) =>
+    (e.key as string) === "progress" ? { value: { value: progress, version: 1 } } : next(e),
+  );
   on("session.model", () => ({ value: "claude-opus-5-5" }));
   on("session.cwd", () => ({ value: cwd }));
   on("session.usage", () => ({
-    value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
+    value: {
+      startedAt: 0,
+      context: {
+        window: WINDOW,
+        breakdown: { autoCompactThreshold: WINDOW } as unknown as SessionContextBreakdown,
+      },
+      rateLimits: [],
+    },
   }));
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
@@ -337,7 +645,13 @@ function worldOf(on: On, options: WorldOptions = {}) {
         },
       }) as never,
   );
-  return { settle: () => clock.settle() };
+  return {
+    clock,
+    settle: () => clock.settle(),
+    setProgress: (next: Progress) => {
+      progress = next;
+    },
+  };
 }
 
 function measure($: Engine, reading: Reading) {
@@ -356,8 +670,12 @@ function measure($: Engine, reading: Reading) {
   return $.session.measure({
     context:
       reading.context === undefined
-        ? { window: 200_000 }
-        : { window: 200_000, percent: reading.context },
+        ? { window: WINDOW }
+        : {
+            window: WINDOW,
+            tokens: reading.context * TOKENS_PER_PERCENT,
+            percent: reading.context,
+          },
     rateLimits: [...limit("five_hour", reading.five), ...limit("seven_day", reading.seven)],
     changed: ["context", "rateLimits"],
   });

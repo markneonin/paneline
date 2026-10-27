@@ -1,6 +1,6 @@
 {
   "name": "paneline",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Claude Code mod (plugin) that adds a side pane with Activity, Files, Agents, Context, MCP, Skills and Spend tabs, a status line above the prompt, a restyled chat, Mermaid diagrams in the terminal, tables, and code and diff panels. Colours follow both /color and the /theme (dark, light and others).",
   "author": {
     "name": "Mark"
@@ -38,7 +38,7 @@
     "autoOpen": {
       "type": "boolean",
       "title": "Auto-open pane",
-      "description": "Open the Session pane when a session starts, clears, resumes or forks. /session still opens it when off",
+      "description": "Open the Session pane when a session starts, clears, resumes or forks. /paneline still opens it when off",
       "default": true
     },
     "probe": {

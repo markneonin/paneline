@@ -21,6 +21,7 @@ import {
   usesOf,
 } from "./mcp-tree";
 import type { Line } from "./skills-tree";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 type World = {
@@ -564,7 +565,7 @@ async function headingColours(pane: Pane): Promise<unknown[]> {
   return HEADINGS.flatMap((heading) =>
     shown
       .filter((line) => line.text === heading)
-      .map((line) => line.parts.find((part) => part.props?.bold === true)?.props?.color),
+      .map((line) => line.parts.find((part) => isHeavy(part.props))?.props?.color),
   );
 }
 

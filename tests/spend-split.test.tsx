@@ -31,6 +31,7 @@ import type { Owner, Pane, World } from "./spend-world";
 const SPLIT = "Where it went";
 const TYPICAL_COST = 12.37;
 const SCALED_COST = 7.77;
+const OWNERS_TOTAL_USD = 9.5;
 const FORK = "fork-1";
 const MAIN_OPUS_3_USD = 750_000;
 const SONNET_1_USD = 500_000;
@@ -43,9 +44,9 @@ describe("spend split", () => {
     const owners = await ownersIn(await spendPane($));
 
     expect(shown(owners)).toEqual([
-      ["implementer", "~$5.00", "40%"],
+      ["implementer", "~$4.50", "36%"],
       ["main · opus 5.5", "~$3.00", "24%"],
-      ["background", "~$2.37", "19%"],
+      ["background", "~$2.87", "23%"],
       ["Explore", "~$2.00", "16%"],
     ]);
   });
@@ -121,16 +122,16 @@ describe("spend split", () => {
     ]);
   });
 
-  test("D7 an agent whose finished turn reports the same tokens again still shows $5.00, not double", async ($, on) => {
+  test("D7 an agent whose finished turn reports the same tokens again still shows $4.50, not double", async ($, on) => {
     const world = worldOf(on, API_KEY);
     await typicalSession($, world, { cost: TYPICAL_COST, isFinishingAgents: true });
 
     const owners = await ownersIn(await spendPane($));
 
     expect(shown(owners)).toEqual([
-      ["implementer", "~$5.00", "40%"],
+      ["implementer", "~$4.50", "36%"],
       ["main · opus 5.5", "~$3.00", "24%"],
-      ["background", "~$2.37", "19%"],
+      ["background", "~$2.87", "23%"],
       ["Explore", "~$2.00", "16%"],
     ]);
   });
@@ -153,7 +154,7 @@ describe("spend split", () => {
 
   test("D9 when the cost equals the owners' total there is no background row and no note row", async ($, on) => {
     const world = worldOf(on, API_KEY);
-    await typicalSession($, world, { cost: 10 });
+    await typicalSession($, world, { cost: OWNERS_TOTAL_USD });
 
     const block = (await blocks(await spendPane($)))[SPLIT];
 
@@ -181,16 +182,16 @@ describe("spend split", () => {
     ]);
   });
 
-  test("D11 owners worth more than the session cost are scaled to $3.89, $2.33 and $1.55, add up to $7.77 and leave no background row", async ($, on) => {
+  test("D11 owners worth more than the session cost are scaled to $3.68, $2.45 and $1.64, add up to $7.77 and leave no background row", async ($, on) => {
     const world = worldOf(on, API_KEY);
     await typicalSession($, world, { cost: SCALED_COST });
 
     const owners = await ownersIn(await spendPane($));
 
     expect(shown(owners)).toEqual([
-      ["implementer", "~$3.89", "50%"],
-      ["main · opus 5.5", "~$2.33", "30%"],
-      ["Explore", "~$1.55", "20%"],
+      ["implementer", "~$3.68", "47%"],
+      ["main · opus 5.5", "~$2.45", "32%"],
+      ["Explore", "~$1.64", "21%"],
     ]);
     expect(centsOf(owners)).toBe(777);
   });

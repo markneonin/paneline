@@ -9,7 +9,7 @@ How paneline is wired. This page describes roles, not line numbers.
 - `registerSessionPane`: the pane shell (tab bar, tab choice). It is registered first, so it runs before the tab hooks.
 - `trackAgents`, `trackGit`, `trackPromptInfo`, `trackActivity`, `trackUsage`: record events into state.
 - `registerTabs`: one register function per tab.
-- `registerSessionCommand`: the `/session` command and opening the pane on session start, unless the `autoOpen` option is off.
+- `registerSessionCommand`: the `/paneline` command and opening the pane on session start, unless the `autoOpen` option is off.
 - `renderChat`: draws chat messages, tool rows and the status row.
 - `registerProbe`: only when the `probe` option is on.
 
@@ -30,11 +30,11 @@ Because atoms must be declared in each file that uses them, the same `atom({ plu
 
 ## Side pane
 
-- `session-pane.tsx` is the shell. `registerSessionCommand` registers `/session` and opens a pane with id `session`. `registerSessionPane` handles `{ component: "Pane", requestId: "session" }`: it reads the `tab` atom, calls `noteShownTab`, sets `bodyColumns` and calls `next` with `requestId` `session:<tab>`. Then it wraps the result with the tab bar (`tab-bar.tsx`).
+- `session-pane.tsx` is the shell. `registerSessionCommand` registers `/paneline` and opens a pane with id `session`. `registerSessionPane` handles `{ component: "Pane", requestId: "session" }`: it reads the `tab` atom, calls `noteShownTab`, sets `bodyColumns` and calls `next` with `requestId` `session:<tab>`. Then it wraps the result with the tab bar (`tab-bar.tsx`).
 - Each tab lives in its own `<name>-tab.tsx`. It exports `<NAME>_TAB` (id and label) and `register<Name>Tab(on)`. That function registers a `ui.render` hook for `session:<id>`. The hook loads only the data of that tab and calls the pure body function in `<name>-draw.tsx`.
-- `tabs.ts` is the only list of tabs: the `TABS` array (order on screen) and `registerTabs`. Activity, Files, Agents, Context, MCP, Skills and Spend are the current tabs. A new tab costs one entry in `TABS`, one register call, and its own files.
+- `tabs.ts` is the only list of tabs: the `TABS` array (order on screen) and `registerTabs`. Activity, Files, Agents, Plan, Context, MCP, Skills and Spend are the current tabs. A new tab costs one entry in `TABS`, one register call, and its own files.
 - `pane-tab.ts` has the pane id and `tabRequestId`. `shown-tab.ts` remembers which tab is shown and whether it was just opened. Tabs use it to start work on entry (Agents polling, a fresh Context breakdown).
-- Tab data comes from different places. Activity and Files use trackers. Agents uses a tracker plus one poll that runs only while the Agents tab is shown. Context, MCP and Skills call `$.session.usage` through `breakdown.ts`, behind `single-flight.ts` and a short cache. Skills reads each `SKILL.md` description with `$.fs.read` and caches it until the tab is entered again; `skills-track.ts` counts `skill.prompt` uses in `$.store`, which keeps them between sessions. Spend keeps token sums in the `paneline.spend` atom: `activity-track.ts` (main turns, tool results), `agents-track.ts` (agent requests) and `spend-track.ts` (`/clear` and compaction) call the pure helpers in `spend-model.ts`. `usage-track.ts` keeps the context and rate-limit numbers for the status row.
+- Tab data comes from different places. Activity and Files use trackers. Plan reads the `paneline.progress` task list that `progress-track.ts` keeps. Agents uses a tracker plus one poll that runs only while the Agents tab is shown. Context, MCP and Skills call `$.session.usage` through `breakdown.ts`, behind `single-flight.ts` and a short cache. Skills reads each `SKILL.md` description with `$.fs.read` and caches it until the tab is entered again; `skills-track.ts` counts `skill.prompt` uses in `$.store`, which keeps them between sessions. Spend keeps token sums in the `paneline.spend` atom: `activity-track.ts` (main turns, tool results), `agents-track.ts` (agent requests) and `spend-track.ts` (`/clear` and compaction) call the pure helpers in `spend-model.ts`. `usage-track.ts` keeps the context and rate-limit numbers for the status row.
 - Pressing a tab button calls `switchTab`, which writes the `tab` atom. Writing it re-renders the pane.
 
 ## Chat renderers
@@ -42,7 +42,7 @@ Because atoms must be declared in each file that uses them, the same `atom({ plu
 `renderChat` registers `ui.render` hooks for engine components: `UserMessage`, `AssistantMessage`, `ToolGroup`, `ToolUse`, `ToolResult`, `TurnDuration` and `AbovePrompt`. A hook may return its own tree or return `next(e)` to keep the engine drawing.
 
 - Assistant text goes through `markdown.ts` (parse to blocks), then the reply drawing code. Blocks are paragraphs, lists, code panels, tables, diagrams and diff panels, each in its own draw file.
-- Tool rows show a short summary and the elapsed time. The Details button runs the `/session` command.
+- Tool rows show a short summary and the elapsed time. The Details button runs the `/paneline` command.
 - `prompt.compose` adds one hint section so the model knows it may write mermaid diagrams.
 
 ## Status row

@@ -53,7 +53,7 @@ describe("spend cache summary and misses", () => {
     expect(missesOf(block)).toEqual([]);
   });
 
-  test("C2 a main turn on a new model that rebuilds 95k tokens shows a model switch miss of 95k and ~$0.22", async ($, on) => {
+  test("C2 a main turn on a new model that rebuilds 95k tokens shows a model switch miss of 95k and ~$0.23", async ($, on) => {
     const world = worldOf(on, API_KEY);
     await mainTurn($, world, { model: OPUS, tokens: { write: CONTEXT }, context: CONTEXT });
     await mainTurn($, world, { model: SONNET, tokens: { write: CONTEXT }, context: 105_000 });
@@ -61,7 +61,7 @@ describe("spend cache summary and misses", () => {
     const block = await cacheIn(await spendPane($));
 
     expect(withoutTime(missesOf(block))).toEqual([
-      { cause: "model switch", tokens: "95k", dollars: "~$0.22" },
+      { cause: "model switch", tokens: "95k", dollars: "~$0.23" },
     ]);
     expect(cacheSummaryOf(block)).toMatchObject({ misses: "1 miss" });
   });
@@ -159,11 +159,11 @@ describe("spend cache summary and misses", () => {
     const block = await cacheIn(await spendPane($));
 
     expect(withoutTime(missesOf(block))).toEqual([
-      { cause: "model switch", tokens: "95k", dollars: "~$0.22" },
+      { cause: "model switch", tokens: "95k", dollars: "~$0.23" },
     ]);
   });
 
-  test("C10 an agent whose second request reads 40k of a 120k prompt from cache shows cache rebuilt, 80k and ~$0.18", async ($, on) => {
+  test("C10 an agent whose second request reads 40k of a 120k prompt from cache shows cache rebuilt, 80k and ~$0.19", async ($, on) => {
     const world = worldOf(on, API_KEY);
     const agentId = await spawnAgent($, world, "implementer");
     await agentRequest($, world, { agentId, model: SONNET, tokens: { write: 120_000 }, index: 0 });
@@ -177,7 +177,7 @@ describe("spend cache summary and misses", () => {
     const block = await cacheIn(await spendPane($));
 
     expect(withoutTime(missesOf(block))).toEqual([
-      { cause: "cache rebuilt", tokens: "80k", dollars: "~$0.18" },
+      { cause: "cache rebuilt", tokens: "80k", dollars: "~$0.19" },
     ]);
     expect(cacheSummaryOf(block)).toMatchObject({ misses: "1 miss" });
   });
@@ -320,7 +320,7 @@ describe("spend cache summary and misses", () => {
     const block = await cacheIn(await spendPane($));
 
     expect(withoutTime(missesOf(block))).toEqual([
-      { cause: "cache rebuilt", tokens: "100k", dollars: "~$0.23" },
+      { cause: "cache rebuilt", tokens: "100k", dollars: "~$0.24" },
     ]);
   });
 

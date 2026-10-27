@@ -9,7 +9,7 @@ type Node = { type: string; props?: Record<string, unknown>; children?: unknown[
 type GitAnswer = { exitCode: number; stdout: string };
 
 const NOW = 200_000;
-const FLUSH_MS = 400;
+const FLUSH_MS = 1_000;
 const COLUMNS = 100;
 const TALL_ROWS = 40;
 const SHORT_ROWS = 22;

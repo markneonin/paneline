@@ -22,6 +22,7 @@ import type { World } from "./clear-world";
 
 const MORE_DONE = /^… \d+ more done$/;
 const FINISHED_AGENTS = 8;
+const POLL_MS = 1_000;
 const OLD_SPEND = 3_000;
 const FRESH_SPEND = 800;
 const SESSION_COST = 0.42;
@@ -77,8 +78,10 @@ describe("agents clear button", () => {
     const pane = await paneOnTab($, "Agents");
 
     await pressClear(pane, world);
+    await world.clock.advance(POLL_MS);
     const whileRunning = await texts(pane);
     await finishAgent($, world, running);
+    await world.clock.advance(POLL_MS);
     const afterFinish = await texts(pane);
 
     expect(whileRunning.find((text) => text.includes("alpha"))).toContain("●");
@@ -94,6 +97,7 @@ describe("agents clear button", () => {
     await pressClear(pane, world);
 
     await spawnAgent($, world, "charlie");
+    await world.clock.advance(POLL_MS);
 
     const shown = await texts(pane);
     expect(shown.some((text) => text.includes("alpha"))).toBe(true);
@@ -126,6 +130,7 @@ describe("agents clear button", () => {
 
     const fresh = await spawnAgent($, world, "fresh");
     await spendTokens($, world, fresh, FRESH_SPEND);
+    await world.clock.advance(POLL_MS);
 
     const shown = await texts(pane);
     const spendRows = shown.slice(shown.indexOf("Spend") + 1);

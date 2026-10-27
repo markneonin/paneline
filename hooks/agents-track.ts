@@ -30,7 +30,7 @@ import { forgetShownTab, isShownTab, justEntered } from "./shown-tab";
 import { folderName, isInside } from "./paths";
 import { targetOf } from "./tools";
 
-const FLUSH_DELAY_MS = 300;
+const FLUSH_DELAY_MS = 1000;
 const POLL_MS = 1000;
 const PRESENT_AGENT_ID = /^(?!undefined$)./;
 
@@ -40,9 +40,15 @@ const sessionUsdAtom = atom(
   null as number | null,
 );
 
+const agentsTickAtom = atom({ plugin: "paneline", key: "agentsTick" } as const, 0);
 const spendAtom = atom({ plugin: "paneline", key: "spend" } as const, emptySpend());
 
+type AgentRequest = Parameters<typeof afterAgentRequest>[2];
+type PendingRequest = { owner: string; request: AgentRequest };
+
 let tree: AgentTree = {};
+let written: AgentTree = tree;
+const pendingRequests: PendingRequest[] = [];
 let seeding: Promise<void> | undefined;
 let pendingFlush: Timer | undefined;
 let poller: Timer | undefined;
@@ -108,14 +114,8 @@ export function trackAgents(on: On): void {
         startedAt,
         endedAt: await $.clock.now(),
       };
-      const owner = tree[agentId]?.type ?? BACKGROUND_OWNER;
-      const state = await update($, spendAtom, (current) =>
-        afterAgentRequest(current, owner, request),
-      );
-      await $.store.set(
-        SPEND_SESSIONS_KEY,
-        withSession(await $.store.get(SPEND_SESSIONS_KEY), await $.session.id(), state),
-      );
+      pendingRequests.push({ owner: tree[agentId]?.type ?? BACKGROUND_OWNER, request });
+      if (!poller) scheduleFlush($);
     }
     return step;
   });
@@ -136,7 +136,7 @@ export function trackAgents(on: On): void {
 
   on("ui.close", { id: PANE }, async ($, e, next) => {
     forgetShownTab();
-    stopPolling();
+    stopPolling($);
     return next(e);
   });
 
@@ -151,7 +151,8 @@ export function trackAgents(on: On): void {
   });
 
   on("classic.SessionStart", { source: "clear" }, async ($, e, next) => {
-    stopPolling();
+    pendingRequests.length = 0;
+    stopPolling($);
     places.clear();
     rootOfAgent.clear();
     await record($, () => ({}));
@@ -208,18 +209,19 @@ async function record(
   const changed = change(tree);
   if (changed === tree) return;
   tree = changed;
-  scheduleFlush($);
+  if (!poller) scheduleFlush($);
 }
 
 function seeded($: EngineInterface): Promise<void> {
   seeding ??= read($, agentsAtom).then((saved) => {
     tree = saved;
+    written = saved;
   });
   return seeding;
 }
 
 async function watchAgents($: EngineInterface): Promise<void> {
-  await pollOnce($);
+  await reconcileListed($);
   startPolling($);
 }
 
@@ -227,29 +229,57 @@ function startPolling($: EngineInterface): void {
   if (hasRunningAgent()) poller ??= $.clock.every(POLL_MS, () => void pollOnce($));
 }
 
-function stopPolling(): void {
+function stopPolling($: EngineInterface): void {
   poller?.cancel();
   poller = undefined;
+  if (tree !== written || pendingRequests.length > 0) scheduleFlush($);
 }
 
 function hasRunningAgent(): boolean {
   return Object.values(tree).some((node) => node.status === "running");
 }
 
-async function pollOnce($: EngineInterface): Promise<void> {
+async function reconcileListed($: EngineInterface): Promise<number> {
   const [listed, at] = await Promise.all([$.agent.list(), $.clock.now()]);
   await record($, (current) => reconciled(current, listed, at));
-  $.ui.invalidate("ui.render");
-  if (!hasRunningAgent() || !isShownTab(AGENTS_TAB.id)) stopPolling();
+  return at;
+}
+
+async function pollOnce($: EngineInterface): Promise<void> {
+  const at = await reconcileListed($);
+  const stateWrite = writeTree($) ?? update($, agentsTickAtom, () => at);
+  await Promise.all([stateWrite, ...spendWrites($)]);
+  if (!hasRunningAgent() || !isShownTab(AGENTS_TAB.id)) stopPolling($);
 }
 
 function scheduleFlush($: EngineInterface): void {
   if (pendingFlush) return;
   pendingFlush = $.clock.after(FLUSH_DELAY_MS, () => {
     pendingFlush = undefined;
-    tree = pruned(tree);
-    void update($, agentsAtom, () => tree);
+    void Promise.all([writeTree($), ...spendWrites($)]);
   });
+}
+
+function writeTree($: EngineInterface): Promise<unknown> | undefined {
+  tree = pruned(tree);
+  if (tree === written) return undefined;
+  written = tree;
+  return update($, agentsAtom, () => tree);
+}
+
+function spendWrites($: EngineInterface): Promise<unknown>[] {
+  if (pendingRequests.length === 0) return [];
+  return [writeSpend($, pendingRequests.splice(0))];
+}
+
+async function writeSpend($: EngineInterface, requests: PendingRequest[]): Promise<void> {
+  const state = await update($, spendAtom, (current) =>
+    requests.reduce((acc, { owner, request }) => afterAgentRequest(acc, owner, request), current),
+  );
+  await $.store.set(
+    SPEND_SESSIONS_KEY,
+    withSession(await $.store.get(SPEND_SESSIONS_KEY), await $.session.id(), state),
+  );
 }
 
 async function settleBaseline($: EngineInterface, usd: number): Promise<void> {

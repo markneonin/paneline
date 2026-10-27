@@ -349,7 +349,10 @@ async function rowsOf(pane: Pane): Promise<string[]> {
     .map((row) => row.text.trimEnd())
     .filter(
       (text) =>
-        text.trim() !== "Files" && !text.startsWith("Files ─") && !text.startsWith("SESSION"),
+        text.trim() !== "Files" &&
+        !text.includes("Activity  Files") &&
+        !text.startsWith("Files ─") &&
+        !text.startsWith("SESSION"),
     );
 }
 
@@ -393,7 +396,7 @@ function elementsIn(node: Node): Node[] {
 
 function foldLabel(node: Node): string {
   const label = node.props?.label;
-  return typeof label === "string" && /^[▸▾]/.test(label) ? label : "";
+  return typeof label === "string" ? label : "";
 }
 
 function textOf(node: Node): string {

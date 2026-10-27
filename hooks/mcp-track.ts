@@ -1,6 +1,7 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, On } from "claude-code";
 
+import { isProgressTool } from "./tools";
 import { countsIn, withUse } from "./use-counts";
 import type { UseCounts } from "./use-counts";
 
@@ -24,7 +25,7 @@ export function trackMcpUses(on: On): void {
 
   on("tool.call", { tool: MCP_TOOL }, async ($, e, next) => {
     const folder = await read($, launchFolderAtom);
-    if (folder === "") return next(e);
+    if (folder === "" || isProgressTool(e.tool)) return next(e);
     const all = withUse(await storedUses($), folder, e.tool);
     await $.store.set(TOOL_USES_KEY, all);
     await update($, toolUsesAtom, () => countsIn(all, folder));

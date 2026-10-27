@@ -247,7 +247,7 @@ function callDetails(ui: Ui, call: CallRecord, view: ActivityView): RenderElemen
         <Text color={dot.color} wrap="truncate-end">
           {dot.text}
         </Text>
-        <Text bold color={paneInk().tool} wrap="truncate-end">
+        <Text weight="semibold" color={paneInk().tool} wrap="truncate-end">
           {call.tool}
         </Text>
         <Text color={paneInk().muted} wrap="truncate-end">

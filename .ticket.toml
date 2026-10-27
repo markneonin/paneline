@@ -1,0 +1,7 @@
+backend = "github"
+base = "main"
+labels = ["band", "design", "needs-priority", "pane", "perf", "rendering", "status-row"]
+
+[github]
+repo = "markneonin/paneline"
+project = 1

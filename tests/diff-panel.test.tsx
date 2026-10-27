@@ -5,6 +5,7 @@ import type { Engine } from "claude-code/testing";
 import { fitHunks } from "../hooks/diff-panel";
 import { palette } from "../hooks/palette";
 import { replyLook } from "../hooks/reply-look";
+import { isHeavy } from "./weight";
 
 const HOME = "/Users/dev";
 const CWD = "/Users/dev/app";
@@ -182,7 +183,9 @@ describe("diff panels", () => {
 
     const [header, ...rows] = childrenOf(tree);
     expect(textOf(header!)).toContain("hooks/a.ts");
-    expect(collect(header!, "Text").find((t) => textOf(t) === "hooks/a.ts")?.props.bold).toBe(true);
+    expect(isHeavy(collect(header!, "Text").find((t) => textOf(t) === "hooks/a.ts")?.props)).toBe(
+      true,
+    );
     expect(header!.props.backgroundColor).toBeUndefined();
     expect(collect(header!, "Text").every((t) => t.props.backgroundColor === undefined)).toBe(true);
     expect(textOf(rows[0]!)).toBe("─".repeat(80 - 2 - 3 - 2));

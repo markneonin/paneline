@@ -1,9 +1,9 @@
 import { expect, mock } from "claude-code/testing";
-import type { On, TurnUsage } from "claude-code";
+import type { On, SessionContextBreakdown, TurnUsage } from "claude-code";
 import type { Engine, MockClock, Mounted } from "claude-code/testing";
 
 import { palette } from "../hooks/palette";
-import { textOf } from "./draw-tree";
+import { collect, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
 import { blocksOf, linesOf } from "./skills-tree";
 import type { Block, Line } from "./skills-tree";
@@ -16,6 +16,7 @@ export type World = {
   clock: MockClock;
   plan: Plan;
   contextTokens: number | undefined;
+  breakdown: SessionContextBreakdown | undefined;
   stepUsage: TurnUsage | null;
   replies: Map<string, ToolReply>;
   spawned: number;
@@ -72,7 +73,8 @@ export const SPLIT_TITLE = "Where it went";
 export const CACHE_TITLE = "Cache misses";
 export const RENT_TITLE = "Biggest tool results in context";
 export const HEADINGS = [SPLIT_TITLE, CACHE_TITLE, RENT_TITLE];
-export const TOTAL_LABELS = "this session from cache tool results";
+export const HIT_LABEL = "from cache · all agents";
+const TOTAL_LABELS = /^this session from cache(?: · all agents)? tool results$/;
 export const BEFORE_TRACKING = "before tracking";
 export const NO_SPEND = "no spend yet";
 export const NO_RENT = "no tool results in context";
@@ -88,8 +90,10 @@ const WORK = "/work";
 const SPEND_STATE_PREFIX = "paneline.spend.";
 const TRACKED_USE_KEYS = ["toolUses", "skillUses"];
 const CORRUPT_VALUE = { sessions: "not a list", owners: 7 };
-const TAB_NAMES = ["Activity", "Files", "Agents", "Context", "MCP", "Skills", "Spend"];
+const TAB_NAMES = ["Activity", "Files", "Agents", "Plan", "Context", "MCP", "Skills", "Spend"];
 const NEXT_TAB_LABEL = "›";
+const PREV_TAB_LABEL = "‹";
+const SELECTED_TAB_TEXT = "clawd_background";
 const OWNER_ROW = /^(.+?) +[▰▱█░]+ +(?:(~\$\d+\.\d{2}) +)?(\d+)%$/;
 const MISS_ROW =
   /^(\d{2}:\d{2}) (after \d+m idle|model switch|after compaction|cache rebuilt) (\d+(?:\.\d)?k?)(?: (~\$\d+\.\d{2}))?$/;
@@ -102,6 +106,7 @@ export function worldOf(on: On, plan: Plan): World {
     clock: mock.clock(on, { now: START }),
     plan,
     contextTokens: undefined,
+    breakdown: undefined,
     stepUsage: null,
     replies: new Map(),
     spawned: 0,
@@ -144,13 +149,16 @@ export function worldOf(on: On, plan: Plan): World {
   });
   on("classic.SessionStart", () => ({}));
   on("ui.open", () => ({ value: { isPlaced: true } }));
-  on("session.usage", () => ({
+  on("session.usage", (_$, e) => ({
     value: {
       startedAt: 0,
-      context:
-        world.contextTokens === undefined
-          ? { window: 200_000 }
-          : { window: 200_000, tokens: world.contextTokens },
+      context: {
+        window: 200_000,
+        ...(world.contextTokens === undefined ? {} : { tokens: world.contextTokens }),
+        ...(e.breakdown === undefined || world.breakdown === undefined
+          ? {}
+          : { breakdown: world.breakdown }),
+      },
       rateLimits: world.plan === SUBSCRIPTION ? [{ kind: "five_hour", percentUsed: 5 }] : [],
     },
   }));
@@ -375,16 +383,40 @@ export async function spendPane($: Engine, columns: number = COLUMNS): Promise<P
 }
 
 export async function showSpend(pane: Pane): Promise<void> {
+  await showTabThroughArrows(pane, SPEND);
+}
+
+export async function showTabThroughArrows(pane: Pane, label: string): Promise<void> {
   for (const _tab of TAB_NAMES) {
     const buttons = await pane.findAll({ type: "Button" });
-    const spend = buttons.find((button) => button.props.label === SPEND);
-    const next = buttons.find((button) => button.props.label === NEXT_TAB_LABEL);
-    expect(spend ?? next, `a ${SPEND} tab button in the tab bar`).toBeDefined();
-    await pane.press({ key: (spend ?? next)?.key ?? "" });
+    const tab = buttons.find((button) => button.props.label === label);
+    if (tab !== undefined) {
+      await pane.press({ key: tab.key ?? "" });
+      await settle(pane);
+      return;
+    }
+    const selected = await selectedTabName(pane);
+    if (selected === label) return;
+    const arrow = arrowToward(label, selected);
+    const button = buttons.find((candidate) => candidate.props.label === arrow);
+    expect(button, `a ${label} tab button or the ${arrow} arrow`).toBeDefined();
+    await pane.press({ key: button?.key ?? "" });
     await settle(pane);
-    if (spend !== undefined) return;
   }
-  expect(false, `${SPEND} reached through the tab arrows`).toBe(true);
+  expect(false, `${label} reached through the tab arrows`).toBe(true);
+}
+
+function arrowToward(label: string, selected: string | undefined): string {
+  return TAB_NAMES.indexOf(label) > TAB_NAMES.indexOf(selected ?? "")
+    ? NEXT_TAB_LABEL
+    : PREV_TAB_LABEL;
+}
+
+async function selectedTabName(pane: Pane): Promise<string | undefined> {
+  const selectedTexts = collect(await pane.drawn(), "Text")
+    .filter((text) => text.props?.color === SELECTED_TAB_TEXT)
+    .map(textOf);
+  return TAB_NAMES.find((name) => selectedTexts.includes(name));
 }
 
 export async function shownTabs(pane: Pane): Promise<string[]> {
@@ -403,12 +435,16 @@ export async function blocks(pane: Pane): Promise<Record<string, Block>> {
 }
 
 export function totalsOf(shown: Line[]): Totals | undefined {
-  const labelsAt = shown.findIndex((line) => line.text === TOTAL_LABELS);
+  const labelsAt = shown.findIndex((line) => isLabelsLine(line));
   const values = shown[labelsAt - 1];
   const labels = shown[labelsAt];
   if (labelsAt <= 0 || values === undefined || labels === undefined) return undefined;
   const [usd = "", hit = "", rent = ""] = values.text.split(" ");
   return { usd, hit, rent, values, labels };
+}
+
+function isLabelsLine(line: Line | undefined): boolean {
+  return TOTAL_LABELS.test(line?.text ?? "");
 }
 
 export function hasNoSpendNote(shown: Line[]): boolean {
@@ -525,7 +561,7 @@ export function shapeOf(shown: Line[]): string[] {
   let block = "";
   return bodyOf(shown).map((line) => {
     if (line.text === "") return "blank";
-    if (line.text === TOTAL_LABELS) return "labels";
+    if (isLabelsLine(line)) return "labels";
     if (HEADINGS.includes(line.text)) {
       block = line.text;
       return `heading ${line.text}`;
@@ -567,7 +603,7 @@ export async function settle(pane: Pane): Promise<void> {
 
 export function bodyOf(shown: Line[]): Line[] {
   const topAt = shown.findIndex(
-    (line, at) => line.text === NO_SPEND || shown[at + 1]?.text === TOTAL_LABELS,
+    (line, at) => line.text === NO_SPEND || isLabelsLine(shown[at + 1]),
   );
   const lastAt = shown.findLastIndex((line) => line.text !== "");
   return shown.slice(topAt, lastAt + 1);

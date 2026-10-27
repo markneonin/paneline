@@ -8,6 +8,7 @@ import { accentOf } from "../hooks/session-color";
 import { THEMES } from "./theme-rgb";
 import { childrenOf, collect, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 
@@ -18,7 +19,7 @@ const CWD = "/Users/dev/app";
 const COLUMNS = 100;
 const PANE_ROWS = 60;
 const FENCE = "```";
-const FLUSH_MS = 400;
+const FLUSH_MS = 1_000;
 const TABS = ["Context", "Activity", "Files", "Agents", "MCP"];
 
 const ACCENT_NAMES = ["red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan"];
@@ -145,7 +146,7 @@ describe("text carries an explicit theme colour", () => {
         ["linear", false],
       ]);
       const colors = collect(tree, "Text")
-        .filter((node) => node.props?.bold === true)
+        .filter((node) => isHeavy(node.props))
         .map((node) => node.props?.color);
       expect(colors).toContain(inkFor(theme).text);
       expect(colors).not.toContain(inkFor(theme).section);

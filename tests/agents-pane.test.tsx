@@ -4,6 +4,7 @@ import type { Engine, Mounted, MockClock } from "claude-code/testing";
 
 import type { AgentNode } from "../hooks/agents-model";
 import { palette } from "../hooks/palette";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 type Node = { type: string; props?: Record<string, unknown>; children?: unknown[] };
@@ -17,7 +18,9 @@ const NARROW_COLUMNS = 36;
 const MAIN_MODEL = "opus";
 const PROBE_PERIOD = 200;
 const SECOND = 1_000;
-const FLUSH_MS = 400;
+const POLL_MS = 1_000;
+const SLOW_TEST_MS = 30_000;
+const FLUSH_MS = 1_000;
 const POLL_AND_FLUSH_MS = 4_000;
 const SPENDERS = 7;
 const SPEND_BARS = 6;
@@ -505,7 +508,7 @@ describe("tabs", () => {
 describe("live updates", () => {
   test(
     "A19 an agent update draws nothing new while Activity is open, and shows at once while Subagents is open",
-    { options: { probe: true } },
+    { options: { probe: true }, timeoutMs: SLOW_TEST_MS },
     async ($, on) => {
       const clock = worldOf(on);
       const logged = recordLogs(on);
@@ -516,6 +519,7 @@ describe("live updates", () => {
       const drawsCountedWhileActivityOpen = logged.length;
       await showTab(pane, "Agents");
       await spawnAgent($, clock, "late arrival");
+      await clock.advance(POLL_MS);
 
       expect(drawsCountedWhileActivityOpen).toBe(0);
       expect(lineContaining(await bodyLines(pane), "late arrival")).not.toBe("");
@@ -707,7 +711,7 @@ async function tabStrength(
     )
   )
     .flat()
-    .filter((text) => text.props.bold === true && text.props.color === TAB_COLOR);
+    .filter((text) => isHeavy(text.props) && text.props.color === TAB_COLOR);
   return {
     bold: bold.map(
       (text) => text.props.text ?? TAB_LABELS.find((label) => JSON.stringify(text).includes(label)),

@@ -17,6 +17,8 @@ const NOTHING_IS_EXPANDED = false;
 const STALE_CONTEXT_PERCENT = 10;
 const MEASURED_CONTEXT_PERCENT = 42;
 const MEASURED_FIVE_HOUR_PERCENT = 17;
+const USAGE_WINDOW = 200_000;
+const TOKENS_PER_PERCENT = USAGE_WINDOW / 100;
 const LONG_TURN_MS = 60_000;
 const SHORT_TURN_MS = 1_000;
 const ENGINE_SECTIONS: PromptComposeSection[] = [
@@ -302,7 +304,12 @@ function mountBand($: Engine, on: On) {
 const AUTO_COMPACT_THRESHOLD = 227_000;
 const DEFAULT_USAGE = {
   startedAt: 0,
-  context: { window: 200_000, percent: STALE_CONTEXT_PERCENT },
+  context: {
+    window: USAGE_WINDOW,
+    tokens: STALE_CONTEXT_PERCENT * TOKENS_PER_PERCENT,
+    percent: STALE_CONTEXT_PERCENT,
+    breakdown: { autoCompactThreshold: USAGE_WINDOW },
+  },
   rateLimits: [{ kind: "five_hour", percentUsed: 5 }],
 };
 
@@ -329,7 +336,11 @@ function tokenMeasure(tokens: number) {
 
 function measure($: Engine, contextPercent: number, fiveHourPercent: number) {
   return $.session.measure({
-    context: { window: 200_000, percent: contextPercent },
+    context: {
+      window: USAGE_WINDOW,
+      tokens: contextPercent * TOKENS_PER_PERCENT,
+      percent: contextPercent,
+    },
     rateLimits: [{ kind: "five_hour", percentUsed: fiveHourPercent }],
     changed: ["context", "rateLimits"],
   });

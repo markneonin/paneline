@@ -10,7 +10,15 @@ export type Activity = {
 
 export type AgentEdit = Activity & { agentId: string };
 
-export type GitChange = { target: string; added: number; removed: number; label: string };
+export type GitChange = {
+  target: string;
+  added: number;
+  removed: number;
+  label: string;
+  base: string;
+};
+
+export type FilesDiff = { target: string; text: string };
 
 export type CallRecord = Activity & { agentId?: string; input: string; output: string };
 
@@ -55,7 +63,12 @@ export type SpendMiss = { at: number; cause: string; rebuilt: number; usd: numbe
 
 export type SpendRent = { tool: string; target: string; tokens: number };
 
-export type SpendMemory = { model: string; endedAt: number; size: number | undefined };
+export type SpendMemory = {
+  model: string;
+  endedAt: number;
+  size: number | undefined;
+  ttl?: "5m" | "1h";
+};
 
 export type SpendState = {
   owners: Record<string, SpendOwner>;
@@ -68,6 +81,8 @@ export type SpendState = {
   rentTokens: number;
   rent: SpendRent[];
   isCompacted: boolean;
+  growthSum: number;
+  growthCount: number;
   mainCacheTtl: "5m" | "1h" | null;
   baselineUsd: number | null;
   mainMemory: SpendMemory | null;
@@ -93,21 +108,30 @@ declare module "claude-code" {
       usage: UsageSnap;
       tab: string;
       filesFolded: Record<string, boolean>;
+      filesDiff: FilesDiff | null;
       mcpSeen: string[];
       mcpQueued: string[];
       mcpOpen: string[];
+      planDoneOpen: boolean;
+      measureStamp: number;
       launchFolder: string;
       skillUses: Record<string, number>;
       toolUses: Record<string, number>;
       skillsStatsOpen: boolean;
       skillsExpanded: string[];
       agents: Record<string, AgentNode>;
+      agentsTick: number;
       sessionUsd: number | null;
       spend: SpendState;
       promptInfo: PromptInfo;
       sessionColor: string;
       theme: string;
       transcriptPath: string;
+      progress: {
+        tasks: Record<string, { status: "pending" | "in_progress" | "completed"; title: string }>;
+        percent: number | null;
+      };
+      callsSinceNote: number;
     };
   }
 }

@@ -1,5 +1,6 @@
 import { childrenOf, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
+import { isHeavy } from "./weight";
 
 export type Line = { text: string; indent: number; parts: Node[]; edge?: number };
 export type Block = { title: string; count: string | null; heading: Line; rows: Line[] };
@@ -94,7 +95,7 @@ export function statsButtonOf(block: Block | undefined): Line | undefined {
 }
 
 function headingOf(line: Line, titles: string[]): Omit<Block, "heading" | "rows"> | null {
-  const isBold = line.parts.some((part) => part.type === "Text" && part.props?.bold === true);
+  const isBold = line.parts.some((part) => part.type === "Text" && isHeavy(part.props));
   if (!isBold) return null;
   const hasClear = line.parts.some((part) => part.type === "Button" && labelOf(part) === "clear");
   const text = hasClear ? line.text.replace(CLEAR_SUFFIX, "") : line.text;

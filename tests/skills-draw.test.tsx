@@ -23,6 +23,7 @@ import {
   useRowsOf,
 } from "./skills-tree";
 import type { Block, Line } from "./skills-tree";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 type DrawWorld = { view: SkillsView; events: string[] };
@@ -383,7 +384,7 @@ function isDimCount(part: Node): boolean {
 }
 
 function boldColour(heading: Line): unknown {
-  const label = heading.parts.find((part) => part.type === "Text" && part.props?.bold === true);
+  const label = heading.parts.find((part) => part.type === "Text" && isHeavy(part.props));
   return label?.props?.color;
 }
 

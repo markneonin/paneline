@@ -126,7 +126,11 @@ export function paneRow(ui: Ui, spec: PaneRowSpec): RenderElement {
           <Text color={guide} wrap={middleWrap}>
             {isPrefixTight ? clippedPrefix : ""}
           </Text>
-          <Text color={middle.color} bold={middle.bold} wrap={middleWrap}>
+          <Text
+            color={middle.color}
+            weight={middle.bold ? "semibold" : undefined}
+            wrap={middleWrap}
+          >
             {middle.text}
           </Text>
         </Text>
@@ -142,7 +146,12 @@ function fixedPart({ Box, Text }: Ui, part: Part | Part[], maxCells: number): Re
       <Box flexShrink={0}>
         <Text wrap="truncate-end">
           {part.map((piece) => (
-            <Text key={piece.text} color={piece.color} bold={piece.bold} wrap="truncate-end">
+            <Text
+              key={piece.text}
+              color={piece.color}
+              weight={piece.bold ? "semibold" : undefined}
+              wrap="truncate-end"
+            >
               {piece.text}
             </Text>
           ))}
@@ -152,7 +161,7 @@ function fixedPart({ Box, Text }: Ui, part: Part | Part[], maxCells: number): Re
   }
   return (
     <Box flexShrink={0}>
-      <Text color={part.color} bold={part.bold} wrap="truncate-end">
+      <Text color={part.color} weight={part.bold ? "semibold" : undefined} wrap="truncate-end">
         {clip(part.text, maxCells)}
       </Text>
     </Box>
@@ -188,7 +197,7 @@ export function header(ui: Ui, label: string, look: HeaderLook, width: number): 
   const { Text } = ui;
   return (
     <Text wrap="truncate-end">
-      <Text bold color={look.color} wrap="truncate-end">
+      <Text weight="semibold" color={look.color} wrap="truncate-end">
         {label}
       </Text>
       <Text

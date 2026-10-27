@@ -1,3 +1,5 @@
+import type { EngineInterface } from "claude-code";
+
 export type GitShell = {
   run: (argv: string[]) => Promise<{ exitCode: number; stdout: string }>;
   report: (error: unknown) => void;
@@ -15,4 +17,15 @@ export async function gitText(
     shell.report(error);
     return null;
   }
+}
+
+export function gitIn($: EngineInterface, dir: string, args: string[]): Promise<string | null> {
+  return gitText(
+    {
+      run: (argv) => $.process.run(argv),
+      report: (error) => $.ui.log(`git failed: ${String(error)}`, { to: "debug" }),
+    },
+    dir,
+    args,
+  );
 }

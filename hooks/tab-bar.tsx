@@ -73,7 +73,12 @@ export function tabBar(
                 <Text color={ACTIVE_TAB_TEXT} backgroundColor={accent} wrap="truncate-end">
                   {" "}
                 </Text>
-                <Text bold color={ACTIVE_TAB_TEXT} backgroundColor={accent} wrap="truncate-end">
+                <Text
+                  weight="semibold"
+                  color={ACTIVE_TAB_TEXT}
+                  backgroundColor={accent}
+                  wrap="truncate-end"
+                >
                   {label}
                 </Text>
                 <Text color={ACTIVE_TAB_TEXT} backgroundColor={accent} wrap="truncate-end">

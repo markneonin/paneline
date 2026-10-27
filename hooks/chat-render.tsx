@@ -19,17 +19,19 @@ import {
   withoutBashChanges,
 } from "./diff-panel";
 import type { BashChanges } from "./diff-panel";
+import { PROGRESS_TOOL } from "./tools";
 import { replyView } from "./reply-draw";
 import type { Accent } from "./pane-kit";
 import { fillsFor } from "./palette";
 import type { Fills } from "./palette";
 import { metersOf, promptInfoRow } from "./prompt-info";
+import type { Progress } from "./prompt-info";
 import { PANE } from "./pane-tab";
 import { accentOf } from "./session-color";
 import { TABS } from "./tabs";
 
 const DIFF_TOOLS = new Set(["Edit", "Write"]);
-const TYPED = new Set(["composer", "bridge", "sdk"]);
+export const TYPED = new Set(["composer", "bridge", "sdk"]);
 const MAX_PROMPT = 4000;
 const MAX_REPLY_CHARS = 60_000;
 const BAND_ROWS_WITH_SPACER = 2;
@@ -47,6 +49,10 @@ const sessionColorAtom = atom({ plugin: "paneline", key: "sessionColor" } as con
 const themeAtom = atom({ plugin: "paneline", key: "theme" } as const, "dark");
 const toolMsAtom = atom({ plugin: "paneline", key: "toolMs" } as const, UNMEASURED_MS);
 const turnStatsAtom = atom({ plugin: "paneline", key: "turnStats" } as const, null);
+const progressAtom = atom(
+  { plugin: "paneline", key: "progress" } as const,
+  { tasks: {}, percent: null } as Progress,
+);
 const tabAtom = atom({ plugin: "paneline", key: "tab" } as const, "activity");
 
 type RenderEvent = { surface: string; viewport?: { columns: number } };
@@ -142,6 +148,11 @@ function changesOf({ tool, output }: FinishedCall): BashChanges | null {
   return change === null ? null : { changes: [change], moreFiles: 0, isShared: false };
 }
 
+function hiddenRow($: EngineInterface, e: ResolveInput): RenderElement {
+  const { Box } = $.ui.resolve(e);
+  return <Box height={0} />;
+}
+
 const columnsOf = (e: RenderEvent): number => e.viewport?.columns ?? 100;
 
 const RENDER_HINT_SECTION = {
@@ -202,15 +213,18 @@ export function renderChat(on: On): void {
       e.props.calls.forEach((call) => call.tool_use_id && expandedCalls.add(call.tool_use_id));
       return next(e);
     }
+    const calls = e.props.calls.filter((call) => call.tool !== PROGRESS_TOOL);
+    if (calls.length === 0) return hiddenRow($, e);
     return toolRow(
       $,
       e,
-      e.props.calls.map((call) => call.tool_use_id),
-      { calls: e.props.calls, isActive: e.props.isActive, elapsedMs: null },
+      calls.map((call) => call.tool_use_id),
+      { calls, isActive: e.props.isActive, elapsedMs: null },
     );
   });
 
   on("ui.render", { component: "ToolUse" }, ($, e, next) => {
+    if (e.props.tool === PROGRESS_TOOL) return hiddenRow($, e);
     if (expandedCalls.has(e.props.tool_use_id)) return drawWithChanges($, e, next);
     return toolRow($, e, [e.props.tool_use_id], {
       calls: [e.props],
@@ -219,7 +233,9 @@ export function renderChat(on: On): void {
     });
   });
 
-  on("ui.render", { component: "ToolResult" }, ($, e, next) => drawWithChanges($, e, next));
+  on("ui.render", { component: "ToolResult" }, ($, e, next) =>
+    e.props.tool === PROGRESS_TOOL ? hiddenRow($, e) : drawWithChanges($, e, next),
+  );
 
   on("ui.render", { component: "TurnDuration" }, async ($, e) => {
     const [stats, fills] = await Promise.all([
@@ -237,15 +253,16 @@ export function renderChat(on: On): void {
 
   on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e);
-    const [theirs, usage, info, home, color, nowMs] = await Promise.all([
+    const [theirs, usage, info, home, color, nowMs, progress] = await Promise.all([
       next(e),
       read($, usageAtom),
       read($, promptInfoAtom),
       $.env.get("HOME"),
       read($, sessionColorAtom),
       $.clock.now(),
+      read($, progressAtom),
     ]);
-    const meters = metersOf(usage, nowMs);
+    const meters = metersOf(usage, nowMs, progress);
     const ui = $.ui.resolve(e);
     const { Box } = ui;
     return (

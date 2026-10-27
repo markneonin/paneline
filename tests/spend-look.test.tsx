@@ -25,6 +25,8 @@ const RICH_SHAPE = [
   "totals",
   "labels",
   "blank",
+  "totals",
+  "blank",
   `heading ${SPLIT_TITLE}`,
   "blank",
   "spend",

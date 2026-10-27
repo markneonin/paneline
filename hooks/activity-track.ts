@@ -1,7 +1,8 @@
-import { atom, memberOf, update } from "claude-code";
+import { atom, memberOf, read, update } from "claude-code";
 import type {
   EngineInterface,
   On,
+  Timer,
   ToolCallInput,
   ToolCallResult,
   TurnCompleteInput,
@@ -17,12 +18,16 @@ import {
   withRent,
   withSession,
 } from "./spend-model";
-import { isEditTool, targetOf } from "./tools";
+import { isEditTool, isProgressTool, targetOf } from "./tools";
 
 const KEPT_CALLS = 50;
 const KEPT_ACTIVITY = 400;
 const KEPT_AGENT_EDITS = 400;
+const AGENT_BATCH_MS = 1000;
 export const UNMEASURED_MS = -1;
+const CALLS_PER_NOTE = 8;
+const FULL_PERCENT = 100;
+const PROGRESS_NOTE = "Call the progress tool with your estimated percent of the whole task done.";
 
 const activityAtom = atom({ plugin: "paneline", key: "activity" } as const, []);
 const agentEditsAtom = atom({ plugin: "paneline", key: "agentEdits" } as const, [] as AgentEdit[]);
@@ -32,9 +37,18 @@ const runningAtom = atom({ plugin: "paneline", key: "running" } as const, [] as 
 const toolMsAtom = atom({ plugin: "paneline", key: "toolMs" } as const, UNMEASURED_MS);
 const turnStatsAtom = atom({ plugin: "paneline", key: "turnStats" } as const, null);
 
+const progressAtom = atom({ plugin: "paneline", key: "progress" } as const, {
+  tasks: {},
+  percent: null as number | null,
+});
+const callsSinceNoteAtom = atom({ plugin: "paneline", key: "callsSinceNote" } as const, 0);
+
 const spendAtom = atom({ plugin: "paneline", key: "spend" } as const, emptySpend());
 
 let turnActivity: Activity[] = [];
+let pendingAgentCalls: CallRecord[] = [];
+let pendingAgentEdits: AgentEdit[] = [];
+let pendingBatch: Timer | undefined;
 
 export function trackActivity(on: On): void {
   on("turn.start", ($, e, next) => {
@@ -43,19 +57,21 @@ export function trackActivity(on: On): void {
   });
 
   on("tool.call", async ($, e, next) => {
+    if (isProgressTool(e.tool)) return next(e);
     const startedAt = await $.clock.now();
     const ran = await (e.agentId === undefined ? runningMainCall($, e, next) : next(e));
     const entry = activityOf(e, ran, (await $.clock.now()) - startedAt);
-    const recorded = update($, callsAtom, (list) =>
-      [...list, callRecord(e, entry, ran, e.agentId)].slice(-KEPT_CALLS),
-    );
+    const record = callRecord(e, entry, ran, e.agentId);
+    if (e.agentId !== undefined) {
+      recordAgentCall($, e.agentId, entry, record);
+      return ran;
+    }
     await Promise.all([
-      recorded,
-      e.agentId === undefined
-        ? Promise.all([recordMainCall($, e.tool_use_id, entry), recordRent($, e, ran)])
-        : recordAgentCall($, e.agentId, entry),
+      writeCalls($, record),
+      recordMainCall($, e.tool_use_id, entry),
+      recordRent($, e, ran),
     ]);
-    return ran;
+    return withProgressNote($, ran);
   });
 
   on("turn.complete", async ($, e, next) => {
@@ -64,8 +80,29 @@ export function trackActivity(on: On): void {
     await update($, memberOf(turnStatsAtom, { requestId: String(e.durationMs) }), () => stats);
     await update($, totalMsAtom, (total) => total + e.durationMs);
     await recordMainSpend($, e);
+    await completeProgress($, e);
     return next(e);
   });
+}
+
+async function withProgressNote($: EngineInterface, ran: ToolCallResult): Promise<ToolCallResult> {
+  const [calls, { tasks }] = await Promise.all([
+    update($, callsSinceNoteAtom, (count) => count + 1),
+    read($, progressAtom),
+  ]);
+  const isNoteDue = calls >= CALLS_PER_NOTE && Object.keys(tasks).length === 0;
+  if (!isNoteDue || ran.deny !== undefined) return ran;
+  await update($, callsSinceNoteAtom, () => 0);
+  return { ...ran, context: [...(ran.context ?? []), PROGRESS_NOTE] };
+}
+
+async function completeProgress($: EngineInterface, e: TurnCompleteInput): Promise<void> {
+  if (e.reason !== "answer") return;
+  const listed = await $.agent.list();
+  if (listed.some((agent) => agent.status === "running")) return;
+  const { percent } = await read($, progressAtom);
+  if (percent === null || percent === FULL_PERCENT) return;
+  await update($, progressAtom, (current) => ({ ...current, percent: FULL_PERCENT }));
 }
 
 async function recordRent(
@@ -121,15 +158,42 @@ async function recordMainCall($: EngineInterface, callId: string, entry: Activit
   ]);
 }
 
-async function recordAgentCall(
+function recordAgentCall(
   $: EngineInterface,
   agentId: string,
   entry: Activity,
-): Promise<void> {
-  if (!isEditTool(entry.tool) || entry.isErrored) return;
-  await update($, agentEditsAtom, (list) =>
-    [...list, { ...entry, agentId }].slice(-KEPT_AGENT_EDITS),
-  );
+  record: CallRecord,
+): void {
+  pendingAgentCalls = [...pendingAgentCalls, record];
+  if (isEditTool(entry.tool) && !entry.isErrored) {
+    pendingAgentEdits = [...pendingAgentEdits, { ...entry, agentId }];
+  }
+  scheduleBatch($);
+}
+
+function scheduleBatch($: EngineInterface): void {
+  if (pendingBatch) return;
+  pendingBatch = $.clock.after(AGENT_BATCH_MS, () => {
+    pendingBatch = undefined;
+    void flushAgentBatch($);
+  });
+}
+
+async function flushAgentBatch($: EngineInterface): Promise<void> {
+  const edits = pendingAgentEdits;
+  pendingAgentEdits = [];
+  await Promise.all([
+    pendingAgentCalls.length > 0 ? writeCalls($) : undefined,
+    edits.length > 0
+      ? update($, agentEditsAtom, (list) => [...list, ...edits].slice(-KEPT_AGENT_EDITS))
+      : undefined,
+  ]);
+}
+
+function writeCalls($: EngineInterface, ...fresh: CallRecord[]): Promise<unknown> {
+  const calls = [...pendingAgentCalls, ...fresh];
+  pendingAgentCalls = [];
+  return update($, callsAtom, (list) => [...list, ...calls].slice(-KEPT_CALLS));
 }
 
 function activityOf(

@@ -109,7 +109,10 @@ export function reconciled(tree: AgentTree, list: ListedAgent[], at: number): Ag
   return list.reduce((acc, listed) => {
     const known = acc[listed.id];
     const override = statusOverrides[listed.status];
-    if (known) return override ? { ...acc, [listed.id]: { ...known, status: override } } : acc;
+    if (known) {
+      if (!override || known.status === override) return acc;
+      return { ...acc, [listed.id]: { ...known, status: override } };
+    }
     const node = newNode({
       id: listed.id,
       parentId: listed.parentId,

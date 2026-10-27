@@ -6,6 +6,7 @@ import { renderChat } from "./chat-render";
 import { trackGit } from "./git-track";
 import { trackMcpUses } from "./mcp-track";
 import { registerProbe } from "./probe";
+import { trackProgress } from "./progress-track";
 import { trackPromptInfo } from "./prompt-track";
 import { registerSessionCommand, registerSessionPane } from "./session-pane";
 import { trackSkills } from "./skills-track";
@@ -21,6 +22,7 @@ export const register: Register = (on, options) => {
   trackGit(on);
   trackPromptInfo(on);
   trackActivity(on);
+  trackProgress(on);
   trackUsage(on);
   trackTheme(on);
   trackSkills(on);

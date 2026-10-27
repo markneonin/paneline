@@ -116,6 +116,24 @@ describe("call details", () => {
     await $.tool.call({ tool: "Bash", command: "true", tool_use_id: "last" } as never);
     expect(callsKept).toBe(KEPT);
   });
+
+  test("A7 with a call's details open, /paneline shows the call list again", async ($, on) => {
+    worldOf(on);
+    await $.tool.call({ tool: "Bash", command: "ls -la", tool_use_id: "bash-1" } as never);
+    const pane = await mountPane($, WIDE_COLUMNS);
+    await pane.press({ key: "call-bash-1" });
+
+    await $.command.run({
+      command: "paneline",
+      args: "",
+      origin: { kind: "composer" },
+      presentation: { isFullscreen: false, columns: WIDE_COLUMNS },
+    });
+
+    const list = (await bodyLines(pane)).map((line) => line.text);
+    expect(list.some((text) => text.startsWith("Timeline"))).toBe(true);
+    expect(list).not.toContain("first output line");
+  });
 });
 
 let callsKept = 0;

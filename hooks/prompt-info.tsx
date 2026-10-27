@@ -17,22 +17,51 @@ const ROW_GAP = 2;
 const MS_PER_MINUTE = 60_000;
 const MINUTES_PER_HOUR = 60;
 const HOURS_PER_DAY = 24;
-const SYMBOLS: Record<string, string> = { ctx: "≡", "5h": "◷", "7d": "▦" };
+const TASK_SYMBOL = "◆";
+const TASK_BAR_CELLS = 5;
+const TASK_COLUMN_WIDTH = `${TASK_SYMBOL} ${PERCENT_SCALE}%`.length;
+const SYMBOLS: Record<string, string> = { task: TASK_SYMBOL, ctx: "≡", "5h": "◷", "7d": "▦" };
 const DROP_STEPS = [[], ["7d"], ["7d", "5h"]];
 const NO_METERS: MeterLayout = { meters: [], withBars: false, shortensPath: false };
 
+export type Progress = {
+  tasks: Record<string, { status: "pending" | "in_progress" | "completed"; title: string }>;
+  percent: number | null;
+};
 type Meter = { label: string; symbol: string; percent: number; reset: string | null };
 
-export function metersOf(usage: UsageSnap, nowMs: number): Meter[] {
+export function metersOf(usage: UsageSnap, nowMs: number, progress: Progress): Meter[] {
   return [
-    ...(usage.context === null ? [] : [{ label: "ctx", percent: usage.context }]),
-    ...usage.limits,
-  ].map((meter) => ({
-    label: meter.label,
-    symbol: SYMBOLS[meter.label] ?? meter.label,
-    percent: Math.max(0, Math.min(100, Math.round(meter.percent))),
-    reset: "resetsAt" in meter ? resetIn(meter.resetsAt, nowMs) : null,
-  }));
+    ...taskMeters(progress),
+    ...[
+      ...(usage.context === null ? [] : [{ label: "ctx", percent: usage.context }]),
+      ...usage.limits,
+    ].map((meter) => {
+      const resetsAt = "resetsAt" in meter ? meter.resetsAt : undefined;
+      return {
+        label: meter.label,
+        symbol: SYMBOLS[meter.label] ?? meter.label,
+        percent: hasPassed(resetsAt, nowMs) ? 0 : clampedPercent(meter.percent),
+        reset: resetIn(resetsAt, nowMs),
+      };
+    }),
+  ];
+}
+
+function taskMeters({ tasks, percent }: Progress): Meter[] {
+  const statuses = Object.values(tasks).map((task) => task.status);
+  const done = statuses.filter((status) => status === "completed").length;
+  const value = statuses.length > 0 ? (done / statuses.length) * PERCENT_SCALE : percent;
+  if (value === null) return [];
+  return [{ label: "task", symbol: TASK_SYMBOL, percent: clampedPercent(value), reset: null }];
+}
+
+function clampedPercent(percent: number): number {
+  return Math.max(0, Math.min(100, Math.round(percent)));
+}
+
+function hasPassed(resetsAt: string | undefined, nowMs: number): boolean {
+  return resetsAt !== undefined && Date.parse(resetsAt) < nowMs;
 }
 
 function resetIn(resetsAt: string | undefined, nowMs: number): string | null {
@@ -95,7 +124,7 @@ function meterText(
             <Text
               color={accent}
             >{`${meter.symbol} ${meter.reset === null ? "" : `${meter.reset} `}`}</Text>
-            <Text bold color={accent}>{`${meter.percent}%`}</Text>
+            <Text weight="semibold" color={accent}>{`${meter.percent}%${trailingOf(meter)}`}</Text>
           </Text>
         ))}
       </Text>
@@ -104,7 +133,7 @@ function meterText(
           {meters.map((meter, index) => (
             <Text key={meter.label}>
               {index === 0 ? "" : COLUMN_GAP}
-              <Text color={accent}>{barOf(meter.percent, topTextOf(meter).length)}</Text>
+              <Text color={accent}>{barOf(meter)}</Text>
             </Text>
           ))}
         </Text>
@@ -117,9 +146,25 @@ function topTextOf({ symbol, reset, percent }: Meter): string {
   return `${symbol} ${reset === null ? "" : `${reset} `}${percent}%`;
 }
 
-function barOf(percent: number, cells: number): string {
-  const filled = Math.round((percent / PERCENT_SCALE) * cells);
-  return FILLED_CELL.repeat(filled) + EMPTY_CELL.repeat(cells - filled);
+function barCellsOf(meter: Meter): number {
+  return meter.label === "task" ? TASK_BAR_CELLS : topTextOf(meter).length;
+}
+
+function columnWidthOf(meter: Meter): number {
+  if (meter.label === "task") return TASK_COLUMN_WIDTH;
+  return Math.max(topTextOf(meter).length, barCellsOf(meter));
+}
+
+function trailingOf(meter: Meter): string {
+  return " ".repeat(columnWidthOf(meter) - topTextOf(meter).length);
+}
+
+function barOf(meter: Meter): string {
+  const cells = barCellsOf(meter);
+  const filled = Math.round((meter.percent / PERCENT_SCALE) * cells);
+  return (FILLED_CELL.repeat(filled) + EMPTY_CELL.repeat(cells - filled)).padEnd(
+    columnWidthOf(meter),
+  );
 }
 
 function fittingLayout(
@@ -154,7 +199,7 @@ function rightWidth(layout: MeterLayout): number {
 }
 
 function metersWidth({ meters }: MeterLayout): number {
-  const widths = meters.map((meter) => topTextOf(meter).length);
+  const widths = meters.map(columnWidthOf);
   return widths.reduce((sum, width) => sum + width, 0) + COLUMN_GAP.length * (widths.length - 1);
 }
 

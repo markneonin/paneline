@@ -16,6 +16,7 @@ export type SpendView = {
   sessionUsd: number | null;
   rows: readonly SplitRow[];
   spend: SpendState;
+  now: number;
 };
 
 const BAR_CELLS = 16;
@@ -25,6 +26,7 @@ const MAX_NAME_CELLS = 16;
 const PERCENT_CELLS = 4;
 const TOKEN_CELLS = 5;
 const CENTS_PER_USD = 100;
+const TTL_MS = { "5m": 5 * 60_000, "1h": 60 * 60_000 } as const;
 const SEPARATOR = " · ";
 const BACKGROUND_NOTE = "agent summaries, compaction, memory";
 const NO_SPEND = "no spend yet";
@@ -64,24 +66,47 @@ function totalsRow(ui: Ui, view: SpendView): RenderElement {
   const hit = cacheHitPercent(view.spend);
   const totals = [
     { value: dollars(view.sessionUsd), label: "this session" },
-    { value: hit === null ? "-" : `${hit}%`, label: "from cache" },
+    { value: hit === null ? "-" : `${hit}%`, label: "from cache · all agents" },
     { value: formatTokens(view.spend.rentTokens), label: "tool results" },
   ];
   const cells = Math.floor(view.width / totals.length);
+  const warmth = warmthText(view.spend, view.now);
   return (
-    <Box key="totals" flexDirection="row" width={view.width}>
-      {totals.map(({ value, label }) => (
-        <Box key={label} flexDirection="column" width={cells} flexShrink={1} minWidth={0}>
-          <Text bold color={paneInk().text} wrap="truncate-end">
-            {value}
-          </Text>
-          <Text color={paneInk().muted} wrap="truncate-end">
-            {label}
-          </Text>
-        </Box>
-      ))}
+    <Box key="totals" flexDirection="column" width={view.width}>
+      <Box flexDirection="row" width={view.width}>
+        {totals.map(({ value, label }) => (
+          <Box
+            key={label}
+            flexDirection="column"
+            width={cells}
+            flexShrink={1}
+            minWidth={0}
+            paddingRight={1}
+          >
+            <Text weight="semibold" color={paneInk().text} wrap="truncate-end">
+              {value}
+            </Text>
+            <Text color={paneInk().muted} wrap="truncate-end">
+              {label}
+            </Text>
+          </Box>
+        ))}
+      </Box>
+      {warmth === null ? null : gap("warmth-gap", ui)}
+      {warmth === null ? null : (
+        <Text color={paneInk().muted} wrap="truncate-end">
+          {warmth}
+        </Text>
+      )}
     </Box>
   );
+}
+
+function warmthText(spend: SpendState, now: number): string | null {
+  const memory = spend.mainMemory;
+  if (memory?.ttl === undefined) return null;
+  const warmUntil = memory.endedAt + TTL_MS[memory.ttl];
+  return warmUntil > now ? `cache warm until ${clockOf(warmUntil)}` : "cache cold";
 }
 
 function gap(key: string, { Box }: Ui): RenderElement {

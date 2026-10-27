@@ -19,6 +19,7 @@ export type AgentsView = {
   now: number;
   width: number;
   height: number;
+  offset: number;
   clear: () => void;
 };
 
@@ -38,6 +39,7 @@ const BRANCH_ROWS = 1;
 const HIDDEN_DONE_ROWS = 1;
 const SPEND_HEADING_ROWS = 2;
 const DETAILS_INDENT = "  ";
+const OVERSCAN_ROWS = 6;
 
 export function agentsTab(ui: Ui, view: AgentsView): RenderElement {
   const { Box, Text } = ui;
@@ -50,7 +52,7 @@ export function agentsTab(ui: Ui, view: AgentsView): RenderElement {
           no subagents yet
         </Text>
       ) : null}
-      {shownRows(plan.rows).map((shown) => agentCard(ui, shown, view))}
+      {cardsInWindow(ui, shownRows(plan.rows), view)}
       {plan.hiddenDone > 0 ? (
         <Text color={paneInk().muted} wrap="truncate-end">
           {`… ${plan.hiddenDone} more done`}
@@ -107,13 +109,31 @@ function shownRows(rows: TreeRow[]): Shown[] {
   });
 }
 
+function cardsInWindow(ui: Ui, shown: Shown[], view: AgentsView): RenderElement[] {
+  const { Box } = ui;
+  const top = view.offset - OVERSCAN_ROWS;
+  const bottom = view.offset + view.height + OVERSCAN_ROWS;
+  let begin = TAB_BAR_ROWS + MAIN_ROWS;
+  return shown.map((card) => {
+    const rows = cardRows(card.row.node);
+    const start = begin;
+    begin += rows;
+    const inWindow = start < bottom && start + rows > top;
+    return inWindow ? (
+      agentCard(ui, card, view)
+    ) : (
+      <Box key={`${card.row.node.id}-spacer`} height={rows} />
+    );
+  });
+}
+
 function mainRow(ui: Ui, view: AgentsView): RenderElement {
   const { Box, Text } = ui;
   return (
     <Box flexDirection="row" width={view.width} height={1} columnGap={1}>
       <Box flexGrow={1} flexShrink={1} minWidth={0}>
         <Text wrap="truncate-end">
-          <Text color={paneInk().text} bold wrap="truncate-end">
+          <Text color={paneInk().text} weight="semibold" wrap="truncate-end">
             main
           </Text>
           <Text color={paneInk().muted} wrap="truncate-end">

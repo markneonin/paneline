@@ -7,6 +7,7 @@ import type {
   SessionContextBreakdown,
 } from "claude-code";
 
+import type { SpendState } from "../types";
 import { formatTokens } from "./format";
 import { plural } from "./pane-kit";
 import { paneInk } from "./pane-ink";
@@ -16,6 +17,7 @@ type Ui = ElementTable;
 
 export type ContextView = {
   context: SessionContextBreakdown | null;
+  spend: SpendState;
   width: number;
   height: number;
 };
@@ -48,7 +50,7 @@ export function contextTab(ui: Ui, view: ContextView): RenderElement {
   }
   const grid = gridBlock(ui, context);
   const summary = [
-    ...headerLines(ui, context),
+    ...headerLines(ui, context, view.spend),
     blankRow(ui, "summary-gap"),
     ...legendLines(ui, context),
   ];
@@ -120,13 +122,33 @@ function squareGlyph(
   return kind === "used" && square.squareFullness < FULL_SQUARE_FROM ? "⛀" : GLYPH_BY_KIND[kind];
 }
 
-function headerLines({ Text }: Ui, context: SessionContextBreakdown): RenderElement[] {
+function turnsToCompact(context: SessionContextBreakdown, spend: SpendState): string | null {
+  const threshold = context.autoCompactThreshold;
+  if (threshold === undefined || spend.growthCount === 0) return null;
+  const meanGrowth = spend.growthSum / spend.growthCount;
+  const turns = Math.max(1, Math.ceil((threshold - context.totalTokens) / meanGrowth));
+  return ` · ~${turns} ${plural("turn", turns)} to auto-compact`;
+}
+
+function headerLines(
+  { Text }: Ui,
+  context: SessionContextBreakdown,
+  spend: SpendState,
+): RenderElement[] {
+  const turns = turnsToCompact(context, spend);
   return [
-    <Text color={paneInk().text} key="model" bold wrap="truncate-end">
+    <Text color={paneInk().text} key="model" weight="semibold" wrap="truncate-end">
       {context.model}
     </Text>,
-    <Text color={paneInk().text} key="usage" wrap="truncate-end">
-      {`${formatTokens(context.totalTokens)}/${formatTokens(context.rawMaxTokens)} tokens (${context.percentage}%)`}
+    <Text key="usage" wrap="truncate-end">
+      <Text color={paneInk().text} wrap="truncate-end">
+        {`${formatTokens(context.totalTokens)}/${formatTokens(context.rawMaxTokens)} tokens (${context.percentage}%)`}
+      </Text>
+      {turns === null ? null : (
+        <Text color={paneInk().muted} wrap="truncate-end">
+          {turns}
+        </Text>
+      )}
     </Text>,
   ];
 }
@@ -201,7 +223,7 @@ function sectionBlocks({ Text }: Ui, context: SessionContextBreakdown): RenderEl
     .filter((section) => section.count > 0)
     .map((section) => [
       <Text key={`${section.title}-title`} wrap="truncate-end">
-        <Text bold color={paneInk().text} wrap="truncate-end">
+        <Text weight="semibold" color={paneInk().text} wrap="truncate-end">
           {section.title}
         </Text>
         <Text color={paneInk().muted} wrap="truncate-end">{` · ${section.hint}`}</Text>

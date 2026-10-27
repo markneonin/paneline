@@ -45,5 +45,6 @@ async function currentTheme($: EngineInterface): Promise<string> {
 }
 
 async function storeTheme($: EngineInterface, theme: string): Promise<void> {
+  if (theme === (await read($, themeAtom))) return;
   await update($, themeAtom, () => theme);
 }

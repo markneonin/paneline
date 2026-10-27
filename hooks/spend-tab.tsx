@@ -17,12 +17,17 @@ const sessionUsdAtom = atom(
 export function registerSpendTab(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
     if (!isShownTab(SPEND_TAB.id)) return next(e);
-    const [spend, sessionUsd] = await Promise.all([read($, spendAtom), read($, sessionUsdAtom)]);
+    const [spend, sessionUsd, now] = await Promise.all([
+      read($, spendAtom),
+      read($, sessionUsdAtom),
+      $.clock.now(),
+    ]);
     return spendTab($.ui.resolve(e), {
       width: e.props.bodyColumns,
       sessionUsd,
       rows: splitRows(spend, sessionUsd),
       spend,
+      now,
     });
   });
 }

@@ -6,7 +6,7 @@ import { ENGINE_DEFAULT_GREY } from "../hooks/session-color";
 
 type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] };
 type Mounted = { drawn: () => Promise<unknown> };
-type World = { clock: MockClock; band: Mounted };
+type World = { clock: MockClock; band: Mounted; setModel: (model: string) => void };
 type WorldOptions = { model?: string; cwd?: string; home?: string };
 type BandOptions = { columns?: number };
 
@@ -81,6 +81,17 @@ describe("the chips row", () => {
     expect(chipTexts(await lastRow(world))[0]).toBe(" haiku 4.5 ");
   });
 
+  test("C7b a prompt after a switch the engine did not announce shows the session model", async ($, on) => {
+    const world = await worldOf($, on);
+    await $.session.start(SESSION_START);
+
+    world.setModel("claude-sonnet-5-5");
+    await $.classic.UserPromptSubmit({ prompt: "hi" });
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))[0]).toBe(" sonnet 5.5 ");
+  });
+
   test("C8 a subagent turn ending with another effort leaves the main chat effort", async ($, on) => {
     const world = await worldOf($, on);
     await $.session.start(SESSION_START);
@@ -100,7 +111,7 @@ async function worldOf(
 ): Promise<World> {
   const clock = mock.clock(on);
   mock.env(on, { HOME: options.home ?? HOME });
-  const model = options.model ?? MODEL;
+  let model = options.model ?? MODEL;
   const cwd = options.cwd ?? WORK_DIR;
 
   on("session.model", () => ({ value: model }));
@@ -139,7 +150,7 @@ async function worldOf(
     viewport: { columns, rows: 40 },
   });
 
-  return { clock, band };
+  return { clock, band, setModel: (next) => (model = next) };
 }
 
 async function lastRow(world: World): Promise<Drawn> {

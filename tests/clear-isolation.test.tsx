@@ -18,6 +18,7 @@ import {
 import type { Pane, World } from "./clear-world";
 
 const SPEND = 1_000;
+const AGENT_EDIT_BATCH_MS = 1_000;
 
 describe("clear leaves the other tabs alone", () => {
   test("X1 pressing clear in Activity leaves Files with its files and counts and Agents with its subagents", async ($, on) => {
@@ -96,6 +97,7 @@ describe("clear leaves the other tabs alone", () => {
     const finished = await spawnAgent($, world, "bravo");
     await editFile($, world, "/work/a.ts", 3, 2, running);
     await editFile($, world, "/work/b.ts", 5, 1, finished);
+    await world.clock.advance(AGENT_EDIT_BATCH_MS);
     await finishAgent($, world, finished);
     const pane = await paneOnTab($, "Agents");
     const filesBefore = await tabTexts(pane, "Files");
@@ -119,6 +121,7 @@ async function busySession($: Engine, world: World): Promise<void> {
   await spendTokens($, world, finished, SPEND);
   await finishAgent($, world, finished);
   await editFile($, world, "/work/z.ts", 3, 2, running);
+  await world.clock.advance(AGENT_EDIT_BATCH_MS);
 }
 
 async function tabTexts(pane: Pane, label: string): Promise<string[]> {

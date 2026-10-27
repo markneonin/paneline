@@ -29,7 +29,7 @@ function runElement(
   const drawn = (
     <Text
       key={style.href === undefined ? key : undefined}
-      bold={style.strong}
+      weight={style.strong ? "semibold" : undefined}
       italic={style.emphasis}
       strikethrough={style.strike}
       underline={style.href !== undefined}

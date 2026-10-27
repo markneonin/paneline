@@ -115,14 +115,14 @@ describe("the drawn tabs use the theme's pane colours", () => {
   });
 
   for (const theme of ["light-ansi", "dark-ansi", "light", "dark"]) {
-    test(`PT6 under ${theme} the tab bar and file folders stay dimmed buttons`, async ($, on) => {
+    test(`PT6 under ${theme} the tab bar and file folders stay dimmed buttons and only the file name is an undimmed name label`, async ($, on) => {
       paneWorld(on, theme);
       await $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
 
       const tree = await paneOnTab($, "Files");
 
       const undimmed = collect(tree, "Button").filter((button) => button.props?.dimColor !== true);
-      expect(undimmed.map((button) => button.props?.label)).toEqual([]);
+      expect(undimmed.map((button) => button.props?.label)).toEqual(["a.ts"]);
     });
   }
 

@@ -2,7 +2,7 @@ import { atom, read, update } from "claude-code";
 import type { EngineInterface, On } from "claude-code";
 
 import type { Activity, AgentEdit, GitChange } from "../types";
-import { gitText } from "./git-run";
+import { gitIn as git } from "./git-run";
 
 const MOVING_COMMAND =
   /\bgit\b[^|;&\n]*\b(merge|rebase|pull|cherry-pick|reset|checkout|switch|commit)\b/;
@@ -102,6 +102,7 @@ function mergedChanges(known: GitChange[], landed: GitChange[]): GitChange[] {
         ? change
         : {
             ...change,
+            base: before.base,
             added: change.added + before.added,
             removed: change.removed + before.removed,
           };
@@ -115,8 +116,17 @@ async function refreshBranches($: EngineInterface, ranIn: string[]): Promise<voi
   const branches = await Promise.all(
     [...roots].map(async (root) => [root, await branchOf($, root)] as const),
   );
-  await update($, branchesAtom, () =>
-    Object.fromEntries(branches.filter(([, branch]) => branch !== null)),
+  const next = Object.fromEntries(
+    branches.filter((entry): entry is readonly [string, string] => entry[1] !== null),
+  );
+  if (sameBranches(await read($, branchesAtom), next)) return;
+  await update($, branchesAtom, () => next);
+}
+
+function sameBranches(stored: Record<string, string>, next: Record<string, string>): boolean {
+  const keys = Object.keys(next);
+  return (
+    keys.length === Object.keys(stored).length && keys.every((key) => stored[key] === next[key])
   );
 }
 
@@ -173,6 +183,7 @@ async function changesBetween(
       added: Number(added) || 0,
       removed: Number(removed) || 0,
       label,
+      base: before.head,
     }));
 }
 
@@ -182,15 +193,4 @@ function mergeLabel(subjects: string): string {
   );
   const [only] = branches;
   return branches.size === 1 && only !== undefined ? `merge ${only}` : GENERIC_LABEL;
-}
-
-function git($: EngineInterface, dir: string, args: string[]): Promise<string | null> {
-  return gitText(
-    {
-      run: (argv) => $.process.run(argv),
-      report: (error) => $.ui.log(`git failed: ${String(error)}`, { to: "debug" }),
-    },
-    dir,
-    args,
-  );
 }

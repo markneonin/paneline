@@ -7,6 +7,7 @@ import { textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
 import { keyOf, linesOf, shownTexts } from "./skills-tree";
 import type { Line } from "./skills-tree";
+import { isHeavy } from "./weight";
 
 export type Pane = Mounted<"terminal", "Pane">;
 export type World = {
@@ -21,7 +22,7 @@ export type World = {
 export const COLUMNS = 100;
 export const TALL_ROWS = 40;
 export const SHORT_ROWS = 20;
-export const FLUSH_MS = 400;
+export const FLUSH_MS = 1_000;
 export const CLEAR_LABEL = "clear";
 export const FAILING_COMMAND = "fail";
 
@@ -29,6 +30,7 @@ const DEFAULT_TAB = "Activity";
 const NOW = 200_000;
 const SETTLE_TICKS = 5;
 const WORK = "/work";
+const SESSION_ID = "session-one";
 const NO_USAGE: TurnUsage = {
   model: "sonnet",
   input_tokens: 0,
@@ -47,6 +49,13 @@ export function worldOf(on: On): World {
     callsMade: 0,
   };
   mock.env(on, { HOME: "/h/u" });
+  const kept = new Map<string, unknown>();
+  on("store.get", (_$, e) => ({ value: kept.get(e.key) }));
+  on("store.set", (_$, e) => {
+    kept.set(e.key, JSON.parse(JSON.stringify(e.value)));
+    return { value: undefined };
+  });
+  on("session.id", () => ({ value: SESSION_ID }));
   on("classic.SessionStart", () => ({}));
   on("ui.open", () => ({ value: { isPlaced: true } }));
   on("session.usage", () => ({
@@ -124,7 +133,7 @@ export async function callRowKeys(pane: Pane): Promise<string[]> {
 export function headingLineOf(shown: Line[], title: string): Line | undefined {
   return shown.findLast((line) =>
     line.parts.some(
-      (part) => part.type === "Text" && part.props?.bold === true && textOf(part).trim() === title,
+      (part) => part.type === "Text" && isHeavy(part.props) && textOf(part).trim() === title,
     ),
   );
 }

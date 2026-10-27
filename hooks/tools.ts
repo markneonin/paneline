@@ -43,6 +43,10 @@ export function isPathTool(tool: string): boolean {
   return kindOf(tool) === "Read" || isEditTool(tool);
 }
 
+export function isProgressTool(tool: string): boolean {
+  return tool === PROGRESS_TOOL;
+}
+
 export function targetOf(call: object): string {
   const fields = call as Record<string, unknown>;
   const target = [...TARGET_FIELDS.map((name) => fields[name]), firstQuestion(fields)].find(
@@ -55,3 +59,5 @@ function firstQuestion(fields: Record<string, unknown>): unknown {
   const [first] = Array.isArray(fields.questions) ? (fields.questions as unknown[]) : [];
   return (first as { question?: unknown } | undefined)?.question;
 }
+
+export const PROGRESS_TOOL = "mcp__paneline__progress";

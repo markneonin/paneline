@@ -5,7 +5,7 @@ import type { Engine, MockClock, Mounted } from "claude-code/testing";
 type Pane = Mounted<"terminal", "Pane">;
 
 const COLUMNS = 80;
-const FLUSH_MS = 300;
+const FLUSH_MS = 1_000;
 const CONTROL_CHARACTER = /\p{Cc}/u;
 const BELL = String.fromCharCode(7);
 const ESCAPE = String.fromCharCode(27);

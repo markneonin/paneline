@@ -10,6 +10,7 @@ import { isShownTab } from "./shown-tab";
 export const AGENTS_TAB = { id: "agents", label: "Agents" };
 
 const agentsAtom = atom({ plugin: "paneline", key: "agents" } as const, {} as AgentTree);
+const agentsTickAtom = atom({ plugin: "paneline", key: "agentsTick" } as const, 0);
 const clearedAtom = atom({ plugin: "paneline", key: "agentsCleared" } as const, [] as string[]);
 const sessionUsdAtom = atom(
   { plugin: "paneline", key: "sessionUsd" } as const,
@@ -25,6 +26,7 @@ export function registerAgentsTab(on: On): void {
       $.session.model(),
       $.clock.now(),
       read($, clearedAtom),
+      read($, agentsTickAtom),
     ]);
     return agentsTab($.ui.resolve(e), {
       agents: withoutCleared(allAgents, cleared),
@@ -33,6 +35,7 @@ export function registerAgentsTab(on: On): void {
       now,
       width: e.props.bodyColumns,
       height: e.props.scroll.bodyRows,
+      offset: e.props.scroll.offset,
       clear: () => void clearFinishedAgents($),
     });
   });

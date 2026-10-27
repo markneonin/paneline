@@ -151,7 +151,7 @@ function buildWindow(ui: Ui, request: DiffRequest): RenderElement {
   );
 }
 
-function hunksOf({ isCreate, hunks, content }: FileChange): Hunk[] {
+export function hunksOf({ isCreate, hunks, content }: FileChange): Hunk[] {
   if (!isCreate || hunks.length > 0 || content === "") return hunks;
   const lines = content.replace(/\n$/, "").split("\n");
   return [
@@ -179,7 +179,7 @@ function headerView(
     <Box key="header" width={width}>
       <Box flexGrow={1} flexShrink={1} minWidth={0} paddingX={1}>
         <Link href={`file://${encodeURI(change.filePath)}`}>
-          <Text bold wrap="truncate-start" color={look.prose}>
+          <Text weight="semibold" wrap="truncate-start" color={look.prose}>
             {path}
           </Text>
         </Link>
@@ -273,7 +273,7 @@ function cutHunk(hunk: Hunk, keep: number): Hunk {
   return { ...hunk, lines, oldLines: context + removed, newLines: context + added };
 }
 
-function unifiedDiff(hunks: Hunk[]): string {
+export function unifiedDiff(hunks: Hunk[]): string {
   return hunks
     .map(
       (hunk) =>

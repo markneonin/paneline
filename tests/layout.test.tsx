@@ -7,6 +7,7 @@ type Tree = { type: string; props?: Record<string, unknown>; children?: unknown[
 type Drawn = { drawn: () => Promise<unknown> };
 type Row = { cells: number; text: string };
 
+const PROGRESS_TOOL = "mcp__paneline__progress";
 const NARROW = 80;
 const WIDE = 200;
 const BAND_SUFFIX_CELLS = 2;
@@ -64,6 +65,29 @@ describe("Claude rows are flush with the left gutter", () => {
       expect(roots.flatMap(flushRightRows)).toEqual([]);
     });
   }
+});
+
+describe("the progress call is invisible", () => {
+  test("H1 a progress call draws no text in the chat", async ($) => {
+    const call = await $.ui.mount({
+      plugin: "paneline",
+      surface: "terminal",
+      component: "ToolUse",
+      props: toolProps("p1", PROGRESS_TOOL),
+      viewport: { columns: NARROW, rows: 24 },
+    });
+
+    expect(textOf(await rootOf(call))).toBe("");
+  });
+
+  test("H2 a group of a Read and a progress call shows only the Read", async ($) => {
+    const readOnly = await mountGroup($, [toolProps("g1", "Read")]);
+    const mixed = await mountGroup($, [toolProps("g1", "Read"), toolProps("g2", PROGRESS_TOOL)]);
+
+    expect(textOf(await rootOf(mixed))).toBe(textOf(await rootOf(readOnly)));
+    expect(textOf(await rootOf(mixed))).toContain("Read");
+    expect(textOf(await rootOf(mixed))).not.toContain("progress");
+  });
 });
 
 describe("the owner prompt is flush right", () => {
@@ -154,6 +178,27 @@ describe("control characters in the prompt", () => {
     );
   });
 });
+
+function toolProps(id: string, tool: string) {
+  return {
+    tool_use_id: id,
+    tool,
+    input: {},
+    isRunning: false,
+    isErrored: false,
+    isInterrupted: false,
+  };
+}
+
+function mountGroup($: Engine, calls: ReturnType<typeof toolProps>[]) {
+  return $.ui.mount({
+    plugin: "paneline",
+    surface: "terminal",
+    component: "ToolGroup",
+    props: { calls, isActive: false, isExpanded: false },
+    viewport: { columns: NARROW, rows: 24 },
+  });
+}
 
 function mountUser($: Engine, text: string, columns: number) {
   return $.ui.mount({

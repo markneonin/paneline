@@ -134,7 +134,7 @@ function headingView(
   const runs = runsOf(inline);
   const labelWidth = displayWidth(plainOf(inline));
   const label = (color: string | undefined) => (
-    <Text bold color={color} wrap="truncate-end">
+    <Text weight="semibold" color={color} wrap="truncate-end">
       {inlineElements(ui, runs, look, color, key)}
     </Text>
   );
@@ -211,7 +211,7 @@ function alertView(
       width={width}
     >
       <Text color={look.prose}>
-        <Text bold color={color}>
+        <Text weight="semibold" color={color}>
           {LEVEL_NAMES[block.level]}
         </Text>
         {hasTitle ? "  " : ""}
@@ -315,7 +315,7 @@ function codePanel(
         {block.lang || "code"}
       </Text>
     ) : (
-      <Text bold color={palette.userText} backgroundColor={look.band}>
+      <Text weight="semibold" color={palette.userText} backgroundColor={look.band}>
         {block.file}
       </Text>
     );

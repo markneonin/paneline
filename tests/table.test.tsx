@@ -6,6 +6,7 @@ import { palette } from "../hooks/palette";
 import { replyLook } from "../hooks/reply-look";
 import { collect, findText, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
+import { isHeavy } from "./weight";
 
 const BUILD_TIME_BOUND_MS = 3000;
 const LONG_CELL = "word ".repeat(24).trim();
@@ -115,7 +116,7 @@ describe("tables", () => {
 
     expect(findText(tree, "x.ts")?.props?.color).toBe(look.code);
     expect(findText(tree, "bold")?.props?.color).toBe(look.strong);
-    expect(findText(tree, "bold")?.props?.bold).toBe(true);
+    expect(isHeavy(findText(tree, "bold")?.props)).toBe(true);
     expect(look.code).toBe(palette.button);
   });
 

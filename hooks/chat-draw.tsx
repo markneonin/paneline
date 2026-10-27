@@ -56,7 +56,7 @@ function rightHeader(ui: Ui, label: string, look: HeaderLook, width: number): Re
       <Text
         color={look.ruleColor}
       >{`${look.ruleChar.repeat(Math.max(0, width - label.length - 1))} `}</Text>
-      <Text bold color={look.color}>
+      <Text weight="semibold" color={look.color}>
         {label}
       </Text>
     </Text>
@@ -108,7 +108,7 @@ export function toolGroupRow(
       {header(ui, "TOOL", accentLook(view.accent, palette.tool), width)}
       <Box flexDirection="row" columnGap={1}>
         <Text wrap="truncate-end">
-          <Text bold color={status.color}>
+          <Text weight="semibold" color={status.color}>
             {status.word}
           </Text>
           <Text color={view.fills.prose}>{`   ${callSummary(view.calls)}${elapsed}`}</Text>

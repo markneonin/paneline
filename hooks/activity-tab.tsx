@@ -23,7 +23,7 @@ const themeAtom = atom({ plugin: "paneline", key: "theme" } as const, "dark");
 const openCallAtom = atom({ plugin: "paneline", key: "openCall" } as const, null as string | null);
 
 export function registerActivityTab(on: On): void {
-  on("command.run", { command: "session" }, async ($, e, next) => {
+  on("command.run", { command: "paneline" }, async ($, e, next) => {
     try {
       await update($, openCallAtom, () => null);
       return await next(e);

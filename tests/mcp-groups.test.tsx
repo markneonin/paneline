@@ -6,6 +6,7 @@ import { palette } from "../hooks/palette";
 import { collect, textOf } from "./draw-tree";
 import { lines, serverEntriesOf } from "./mcp-tree";
 import type { Node } from "./draw-tree";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 
@@ -75,7 +76,7 @@ describe("mcp tab groups", () => {
     );
     expect(headings).toHaveLength(HEADINGS.length);
     for (const heading of headings) {
-      expect(heading.props?.bold).toBe(true);
+      expect(isHeavy(heading.props)).toBe(true);
       expect(heading.props?.color).toBe(palette.text);
     }
   });

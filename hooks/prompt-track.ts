@@ -32,12 +32,19 @@ export function trackPromptInfo(on: On): void {
 
   on("classic.UserPromptSubmit", async ($, e, next) => {
     await refreshColor($, e.transcript_path);
+    await refreshModel($);
     return next(e);
   });
 
   on("command.run", { command: "color" }, async ($, e, next) => {
     const result = await next(e);
     await refreshColor($, await read($, transcriptPathAtom));
+    return result;
+  });
+
+  on("command.run", { command: "model" }, async ($, e, next) => {
+    const result = await next(e);
+    await refreshModel($);
     return result;
   });
 
@@ -55,6 +62,7 @@ export function trackPromptInfo(on: On): void {
   on("classic.Stop", async ($, e, next) => {
     if (e.agent_id === undefined) {
       await refreshColor($, e.transcript_path);
+      await refreshModel($);
       await change($, { effort: e.effort?.level ?? null });
     }
     return next(e);
@@ -70,6 +78,10 @@ async function seed($: EngineInterface): Promise<void> {
   await change($, { model: await $.session.model(), cwd: await $.session.cwd() });
 }
 
+async function refreshModel($: EngineInterface): Promise<void> {
+  await change($, { model: await $.session.model() });
+}
+
 async function change($: EngineInterface, patch: Partial<PromptInfo>): Promise<void> {
   const current = await read($, promptInfoAtom);
   const updated = { ...current, ...patch };
@@ -83,9 +95,10 @@ async function change($: EngineInterface, patch: Partial<PromptInfo>): Promise<v
 }
 
 async function refreshColor($: EngineInterface, transcriptPath: string): Promise<void> {
-  await update($, transcriptPathAtom, () => transcriptPath);
+  if (transcriptPath !== (await read($, transcriptPathAtom)))
+    await update($, transcriptPathAtom, () => transcriptPath);
   const agentColor = await lastAgentColor($, transcriptPath);
-  if (agentColor === undefined) return;
+  if (agentColor === undefined || agentColor === (await read($, sessionColorAtom))) return;
   await update($, sessionColorAtom, () => agentColor);
 }
 

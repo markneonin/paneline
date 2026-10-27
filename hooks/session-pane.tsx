@@ -15,18 +15,31 @@ const sessionColorAtom = atom({ plugin: "paneline", key: "sessionColor" } as con
 const tabAtom = atom({ plugin: "paneline", key: "tab" } as const, "activity");
 const themeAtom = atom({ plugin: "paneline", key: "theme" } as const, "dark");
 
+let knownTab = "";
+let knownTheme = "";
+
 export function registerSessionPane(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
+    const width = e.props.bodyColumns;
+    const narrowed = { ...e, props: { ...e.props, bodyColumns: width - BODY_PADDING } };
+    noteShownTab(knownTab);
+    notePaneTheme(knownTheme);
+    const firstBody = next(narrowed);
+    firstBody.catch(() => undefined);
     const [tab, theme, color] = await Promise.all([
       read($, tabAtom),
       read($, themeAtom),
       read($, sessionColorAtom),
     ]);
-    noteShownTab(tab);
-    notePaneTheme(theme);
+    const changed = tab !== knownTab || theme !== knownTheme;
+    knownTab = tab;
+    knownTheme = theme;
+    if (changed) {
+      noteShownTab(tab);
+      notePaneTheme(theme);
+    }
+    const body = await (changed ? next(narrowed) : firstBody);
     const accent = accentOf(color);
-    const width = e.props.bodyColumns;
-    const body = await next({ ...e, props: { ...e.props, bodyColumns: width - BODY_PADDING } });
     const ui = $.ui.resolve(e);
     const { Box } = ui;
     const { fill } = paneInk();
@@ -37,7 +50,17 @@ export function registerSessionPane(on: On): void {
         minHeight={fill === undefined ? undefined : e.props.scroll.bodyRows}
         backgroundColor={fill}
       >
-        {tabBar(ui, TABS, tab, (id) => void update($, tabAtom, () => id), width, accent)}
+        {tabBar(
+          ui,
+          TABS,
+          tab,
+          (id) => {
+            knownTab = id;
+            void update($, tabAtom, () => id);
+          },
+          width,
+          accent,
+        )}
         <Box flexDirection="column" paddingLeft={BODY_PADDING} width={width}>
           {body}
         </Box>
@@ -48,7 +71,7 @@ export function registerSessionPane(on: On): void {
 
 export function registerSessionCommand(on: On, autoOpen: boolean): void {
   on("session.start", { isInteractive: true }, async ($, e, next) => {
-    await $.command.register({ name: "session", description: "Open the Session side pane" });
+    await $.command.register({ name: "paneline", description: "Open the Session side pane" });
     if (autoOpen) void openPane($);
     return next(e);
   });
@@ -58,7 +81,7 @@ export function registerSessionCommand(on: On, autoOpen: boolean): void {
     return next(e);
   });
 
-  on("command.run", { command: "session" }, async ($) => {
+  on("command.run", { command: "paneline" }, async ($) => {
     try {
       await update($, tabAtom, () => TABS[0].id);
       await openPane($);

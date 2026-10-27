@@ -26,22 +26,23 @@ describe("session command", () => {
 
     expect(result.text).toBeUndefined();
     expect(world.logs).toEqual([]);
+    expect(world.opened).toEqual(["session"]);
   });
 });
 
 function run($: Engine) {
   return $.command.run({
-    command: "session",
+    command: "paneline",
     args: "",
     origin: { kind: "composer" },
     presentation: { isFullscreen: false, columns: 100 },
   });
 }
 
-function worldOf(on: On): { failOpen: boolean; logs: string[] } {
+function worldOf(on: On): { failOpen: boolean; logs: string[]; opened: string[] } {
   mock.clock(on);
   mock.env(on, { HOME: "/home" });
-  const world = { failOpen: false, logs: [] as string[] };
+  const world = { failOpen: false, logs: [] as string[], opened: [] as string[] };
   on("session.model", () => ({ value: "claude-opus-5-5" }));
   on("session.cwd", () => ({ value: "/work" }));
   on("session.usage", () => ({
@@ -49,8 +50,9 @@ function worldOf(on: On): { failOpen: boolean; logs: string[] } {
   }));
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
-  on("ui.open", () => {
+  on("ui.open", (_$, e) => {
     if (world.failOpen) throw new Error(OPEN_ERROR);
+    world.opened.push(e.id);
     return { value: { isPlaced: true } };
   });
   on("ui.log", (_$, e) => {

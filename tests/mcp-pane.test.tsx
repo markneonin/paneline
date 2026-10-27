@@ -13,6 +13,7 @@ import {
   serverEntriesOf,
   summaryOf,
 } from "./mcp-tree";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 type Node = { type: string; props?: Record<string, unknown>; children?: unknown[] };
@@ -20,6 +21,7 @@ type World = {
   usageCalls: number;
   commands: string[];
   breakdown: { mcpTools: unknown[] };
+  configDisabled: string[] | undefined;
   finishCommands: () => void;
 };
 
@@ -222,13 +224,43 @@ describe("mcp tab", () => {
       "clawd_background",
       "clawd_background",
     ]);
-    expect(filled.filter((text) => text.props.bold === true)).toHaveLength(1);
+    expect(filled.filter((text) => isHeavy(text.props))).toHaveLength(1);
     const dim = (await pane.findAll({ type: "Button" })).filter(
       (button) =>
         button.props.dimColor === true &&
         ["Activity", "Files"].includes(String(button.props.label)),
     );
     expect(dim).toHaveLength(2);
+  });
+
+  test("M8 a measure that changes no unit redraws the open MCP tab with the new tool count, with no press or redraw", async ($, on) => {
+    const world = worldOf(on);
+    const pane = await paneOnTab($, "MCP");
+    expect(rowOrFail(await lines(pane), "linear").tools).toBe("2 tools");
+    world.breakdown.mcpTools = [
+      ...LINEAR_AND_DOCS,
+      { name: "mcp__linear__c", serverName: "linear", tokens: 900, isLoaded: true },
+    ];
+
+    await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: [] });
+
+    expect(rowOrFail(await lines(pane), "linear").tools).toBe("3 tools");
+  });
+
+  test("M9 after a disable command finishes the queued mark goes and a server the config now disables shows as hollow with enable", async ($, on) => {
+    const world = worldOf(on);
+    const pane = await paneOnTab($, "MCP");
+    await pressServer(pane, "linear");
+    await pressAction(pane, "linear", "disable");
+    expect((await rowTexts(pane)).some((text) => /✔\s*linear\s*queued$/u.test(text))).toBe(true);
+    world.configDisabled = ["docs-extra"];
+
+    await finishCommands(world, pane);
+
+    expect((await rowTexts(pane)).some((text) => text.includes("queued"))).toBe(false);
+    expect(hollowRowOf(await lines(pane), "docs-extra")).toBeDefined();
+    await pressNth(pane, "docs-extra", 0);
+    expect(await buttonLabels(pane)).toContain("enable");
   });
 });
 
@@ -246,6 +278,7 @@ function worldOf(on: On): World {
     usageCalls: 0,
     commands: [],
     breakdown: { mcpTools: LINEAR_AND_DOCS },
+    configDisabled: undefined,
     finishCommands,
   };
   mock.clock(on, { now: NOW });
@@ -270,6 +303,14 @@ function worldOf(on: On): World {
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "opus" }));
   on("session.cwd", () => ({ value: "/work" }));
+  on("fs.read", (_$, e, next) => {
+    if (world.configDisabled === undefined || !e.path.endsWith(".claude.json")) return next(e);
+    return {
+      value: JSON.stringify({
+        projects: { "/work": { disabledMcpServers: world.configDisabled } },
+      }),
+    };
+  });
   on("command.run", { command: "mcp" }, async (_$, e) => {
     world.commands.push(e.args);
     await gate;

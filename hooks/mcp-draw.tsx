@@ -93,7 +93,7 @@ function titleRow(ui: Ui, view: McpView): RenderElement {
   return (
     <Box flexDirection="row" width={view.width} columnGap={1}>
       <Box flexGrow={1}>
-        <Text bold color={paneInk().text} wrap="truncate-end">
+        <Text weight="semibold" color={paneInk().text} wrap="truncate-end">
           Manage MCP servers
         </Text>
       </Box>

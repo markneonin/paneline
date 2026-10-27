@@ -48,7 +48,7 @@ The plugin loader and validator are strict. Read `docs/engine-limits.md` before 
 
 ## Module map (`hooks/`)
 
-- `register.ts`: entry point. Calls the pane shell, each `track*` function, `registerTabs`, the `/session` command and `renderChat`.
+- `register.ts`: entry point. Calls the pane shell, each `track*` function, `registerTabs`, the `/paneline` command and `renderChat`.
 - `tabs.ts`: the list of pane tabs. A new tab is one entry there plus one register call.
 - `*-tab.tsx`: one file per pane tab. Exports the tab id and label and registers its render hook.
 - `*-draw.tsx`, `pane-kit.tsx`, `tab-bar.tsx`, `tree-glyphs.ts`: pane bodies (pure functions) and shared pane rows.

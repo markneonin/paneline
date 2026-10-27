@@ -30,6 +30,8 @@ A second `on("<event>", hook)` without a matcher for the same event is refused: 
 - `on("tool.call", { tool: "Bash" }, hook)` for one tool.
 - `on("turn.step", { agentId: PRESENT_AGENT_ID }, hook)` for subagent events only. The pattern is in `hooks/agents-track.ts`. A regular expression sees an absent value as the text `undefined`, so the pattern has to reject that text.
 
+A regular expression matcher does not fire for a field that is absent from the event. `{ agent_id: /^undefined$/ }` on `classic.PostToolUse` never matches a main-session tool use, so a hook for events without that field keeps a check inside the hook.
+
 ## `types/index.d.ts` must be self-contained
 
 The file named by `types` in `plugin.json` may not use `import`, `export ... from`, `require` or `reference`. The validator says: `import reaches outside the file; the contract must be self-contained`. Write shapes inline, even when they repeat a type from `hooks/`. Keep both copies in step by hand. The `agents` state shape is the main example.

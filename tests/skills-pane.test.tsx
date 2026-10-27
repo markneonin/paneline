@@ -10,6 +10,7 @@ import type { Engine, Mounted } from "claude-code/testing";
 
 import { palette } from "../hooks/palette";
 import type { Node } from "./draw-tree";
+import { showTabThroughArrows } from "./spend-world";
 import {
   blocksOf,
   clearButtonOf,
@@ -25,6 +26,7 @@ import {
   useRowsOf,
 } from "./skills-tree";
 import type { Block, Line } from "./skills-tree";
+import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
 type ListedSkill = { name: string; source: string; pluginName?: string };
@@ -763,7 +765,7 @@ describe("skills tab cost", () => {
     await startIn($, CWD);
     const pane = await paneOnTab($, "Skills");
     expect(headingOrder(await lines(pane), HEADINGS)).toEqual(["User"]);
-    await pressTab(pane, "Files");
+    await showTabThroughArrows(pane, "Files");
     world.skillFilesRead.length = 0;
     const breakdownsBefore = world.breakdownCalls;
 
@@ -826,8 +828,7 @@ async function blocks(pane: Pane): Promise<Record<string, Block>> {
 async function headingColours(pane: Pane): Promise<unknown[]> {
   return Object.values(await blocks(pane)).map(
     (block) =>
-      block.heading.parts.find((part) => part.type === "Text" && part.props?.bold === true)?.props
-        ?.color,
+      block.heading.parts.find((part) => part.type === "Text" && isHeavy(part.props))?.props?.color,
   );
 }
 
@@ -969,17 +970,8 @@ function mountPane($: Engine): Promise<Pane> {
 
 async function paneOnTab($: Engine, label: string): Promise<Pane> {
   const pane = await mountPane($);
-  await pressTab(pane, label);
+  await showTabThroughArrows(pane, label);
   return pane;
-}
-
-async function pressTab(pane: Pane, label: string): Promise<void> {
-  const target = (await pane.findAll({ type: "Button" })).find(
-    (button) => button.props.label === label,
-  );
-  expect(target, `a ${label} tab button`).toBeDefined();
-  await pane.press({ key: target?.key ?? "" });
-  await settle(pane);
 }
 
 async function skillRow(pane: Pane, name: string): Promise<Line | undefined> {
