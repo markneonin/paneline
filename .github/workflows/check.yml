@@ -16,9 +16,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm install --global @anthropic-ai/claude-code@2.1.312
+      - run: npm install --no-package-lock --no-audit --no-fund
+      - run: npm install --global @anthropic-ai/claude-code@2.1.322
       - name: Generate plugin types
         env:
           TERM: xterm-256color
