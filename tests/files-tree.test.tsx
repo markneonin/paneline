@@ -3,6 +3,7 @@ import type { On } from "claude-code";
 import type { Engine, Mounted } from "claude-code/testing";
 
 import type { Activity } from "../types";
+import { isHidden } from "./draw-tree";
 
 type Pane = Mounted<"terminal", "Pane">;
 type Node = { type: string; props?: Record<string, unknown>; children?: unknown[] };
@@ -130,6 +131,47 @@ describe("files tree", () => {
     expect(lines.some((line) => line.text.includes("with-a-long"))).toBe(true);
     expect(unwrapped).toEqual([]);
   });
+
+  test("T2-d typing draw keeps matching files with their folders and folder totals count only kept files", async ($, on) => {
+    worldOf(on);
+    const pane = await paneWith($, [
+      edit("/work/src/draw.ts", 3, 1),
+      edit("/work/src/model.ts", 5, 2),
+      edit("/work/docs/other.md", 1, 1),
+    ]);
+
+    await pane.input({ key: "filter", text: "DRAW", kind: "change" });
+
+    const rows = await rowsOf(pane);
+    expect(rows.some((row) => row.includes("draw.ts"))).toBe(true);
+    expect(rows.some((row) => row.includes("model.ts") || row.includes("other.md"))).toBe(false);
+    expect(rows.some((row) => row.includes("docs/"))).toBe(false);
+    expect(rows.find((row) => row.includes("draw.ts"))).toMatch(/\+3 -1$/);
+  });
+
+  test("T2-e with no match the field stays and the tab says no matching files", async ($, on) => {
+    worldOf(on);
+    const pane = await paneWith($, [read("/work/a.ts")]);
+
+    await pane.input({ key: "filter", text: "zzz-none", kind: "change" });
+
+    expect((await bodyRows(pane)).map((row) => row.text)).toContain("no matching files");
+    expect(await pane.find({ type: "Input", key: "filter" })).toBeDefined();
+  });
+});
+
+describe("files filter row", () => {
+  test("T4-b one blank row sits between the filter row and the Files heading", async ($, on) => {
+    worldOf(on);
+    const pane = await paneWith($, [read("/work/a.ts")]);
+
+    const texts = rowsIn((await pane.drawn()) as unknown as Node).map((row) => row.text);
+
+    const filterAt = texts.findIndex((text) => text.startsWith("f filter"));
+    expect(filterAt).toBeGreaterThan(-1);
+    expect(texts[filterAt + 1]).toBe("");
+    expect(texts[filterAt + 2]?.startsWith("Files")).toBe(true);
+  });
 });
 
 function read(target: string): Activity {
@@ -159,6 +201,7 @@ function worldOf(on: On): void {
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => ({ value: [] }));
   on("fs.exists", (_$, e) => (missing.has(e.path) ? { value: false } : { value: true }));
@@ -193,6 +236,7 @@ async function rowsOf(pane: Pane): Promise<string[]> {
     .filter(
       (text) =>
         text.trim() !== "Files" &&
+        text.trim() !== "f filter" &&
         !text.includes("Activity  Files") &&
         !text.startsWith("Files ─") &&
         !text.startsWith("SESSION"),
@@ -205,6 +249,7 @@ async function bodyRows(pane: Pane): Promise<Row[]> {
 }
 
 function rowsIn(node: Node): Row[] {
+  if (isHidden(node)) return [];
   if (node.type === "Text") return [{ text: textOf(node), outerTexts: [node] }];
   if (isRow(node) && !holdsColumn(node))
     return [{ text: textOf(node), outerTexts: outerTexts(node) }];
@@ -243,6 +288,7 @@ function foldLabel(node: Node): string {
 }
 
 function textOf(node: Node): string {
+  if (isHidden(node)) return "";
   if (node.type === "Button") return foldLabel(node);
   return (node.children ?? [])
     .map((child) => (typeof child === "string" ? child : textOf(child as Node)))

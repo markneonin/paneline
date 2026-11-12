@@ -2,6 +2,10 @@ export type UseCounts = Record<string, Record<string, number>>;
 
 export type UseEntry = { name: string; uses: number };
 
+export function savedUses(stored: unknown): UseCounts {
+  return (stored ?? {}) as UseCounts;
+}
+
 export function withUse(all: UseCounts, folder: string, name: string): UseCounts {
   const inFolder = all[folder] ?? {};
   return { ...all, [folder]: { ...inFolder, [name]: (inFolder[name] ?? 0) + 1 } };

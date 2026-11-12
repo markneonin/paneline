@@ -12,11 +12,15 @@ type Pane = Mounted<"terminal", "Pane">;
 export type ServerRow = { line: Line; glyph: string; name: string; tools: string; uses: string };
 
 const SETTLE_TICKS = 5;
-const SERVER_ROW = /^([▸▾])\s*([✔○])\s*(.+?)\s+(\d+ tools?)\s*·\s*(\d+ uses?)$/u;
+const SERVER_ROW =
+  /^([▸▾])\s*([✔○])\s*(.+?)(?:\s+·\s*\d+ failed)?\s+(\d+ tools?)(?:\s+(?:[\d.]+k? tokens|deferred))?\s+(\d+ uses?)$/u;
 export const ANY_SERVER_ROW = /^(?:[▸▾]\s*)?[✔○]/u;
 const TOOL_ROW = /^(\S+) (\d+ uses?)$/u;
 const SERVER_NAME =
-  /^(?:[▸▾]\s*)?[✔○]\s*(.+?)(?:\s+\d+ tools?\s*·\s*\d+ uses?|\s+\d+ uses?|\s+queued)?$/u;
+  /^(?:[▸▾]\s*)?[✔○]\s*(.+?)(?:\s+·\s*\d+ failed\b.*|\s+\d+ tools?\b.*|\s+\d+ uses?\b.*|\s+queued.*)?$/u;
+const FAILED_TEXT = /(\d+ failed)/u;
+const USES_TEXT = /(\d+ uses?)$/u;
+const TOKEN_TEXT = /([\d.]+k? tokens)/u;
 
 export function serverEntriesOf(shown: Line[]): [string, string][] {
   return shown.flatMap((line) => {
@@ -126,4 +130,20 @@ export async function pressAction(pane: Pane, server: string, action: string): P
 
 export function hollowRowOf(shown: Line[], name: string): Line | undefined {
   return shown.find((line) => line.text.includes("○") && line.text.includes(name));
+}
+
+export function failedTextOf(line: Line): string | undefined {
+  return FAILED_TEXT.exec(line.text)?.[1];
+}
+
+export function usesTextOf(line: Line): string | undefined {
+  return USES_TEXT.exec(line.text)?.[1];
+}
+
+export function tokenTextOf(line: Line): string | undefined {
+  return TOKEN_TEXT.exec(line.text)?.[1];
+}
+
+export function detailAfter(line: Line, name: string): string {
+  return line.text.slice(line.text.indexOf(name) + name.length).trim();
 }

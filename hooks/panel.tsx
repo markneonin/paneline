@@ -7,6 +7,7 @@ type PanelSpec = {
   width: number;
   look: ReplyLook;
   title: RenderElement;
+  isTitlePressable?: boolean;
   right?: RenderElement[];
   body?: RenderElement;
   hiddenLines?: number;
@@ -23,18 +24,33 @@ export function panel(ui: ElementTable, spec: PanelSpec): RenderElement {
   );
 }
 
-function band(ui: ElementTable, { look, title, right = [], width }: PanelSpec): RenderElement {
+function band(
+  ui: ElementTable,
+  { look, title, isTitlePressable = false, right = [], width }: PanelSpec,
+): RenderElement {
   const { Box, Text } = ui;
+  const mark = [
+    <Text key="bar" color={look.accent} backgroundColor={look.band}>
+      ▌
+    </Text>,
+    <Text key="gap" backgroundColor={look.band}>
+      {" "}
+    </Text>,
+  ];
   return (
     <Box flexDirection="row" width={width} backgroundColor={look.band}>
-      <Box flexGrow={1} flexShrink={1} minWidth={0}>
-        <Text wrap="truncate-start" backgroundColor={look.band}>
-          <Text color={look.accent} backgroundColor={look.band}>
-            ▌
+      <Box flexGrow={1} flexShrink={1} minWidth={0} backgroundColor={look.band}>
+        {isTitlePressable ? (
+          <Box flexDirection="row" backgroundColor={look.band}>
+            {mark}
+            {title}
+          </Box>
+        ) : (
+          <Text wrap="truncate-start" backgroundColor={look.band}>
+            {mark}
+            {title}
           </Text>
-          <Text backgroundColor={look.band}> </Text>
-          {title}
-        </Text>
+        )}
       </Box>
       {right.length === 0 ? null : (
         <Box

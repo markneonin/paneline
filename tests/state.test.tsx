@@ -291,6 +291,7 @@ function mountBand($: Engine, on: On) {
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: 10,
       bodyColumns: COLUMNS,

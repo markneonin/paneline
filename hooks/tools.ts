@@ -1,3 +1,4 @@
+import type { Activity } from "../types";
 import { singleLine } from "./format";
 
 export type ToolKind = "Read" | "Edit" | "Bash" | "Search" | "Web" | "Agent" | "Other";
@@ -29,6 +30,7 @@ const TARGET_FIELDS = [
   "query",
   "description",
   "message",
+  "skill",
 ];
 
 export function kindOf(tool: string): ToolKind {
@@ -41,6 +43,21 @@ export function isEditTool(tool: string): boolean {
 
 export function isPathTool(tool: string): boolean {
   return kindOf(tool) === "Read" || isEditTool(tool);
+}
+
+export function isFailedEdit(entry: { tool: string; isErrored: boolean }): boolean {
+  return isEditTool(entry.tool) && entry.isErrored;
+}
+
+export function isSuccessfulEdit(entry: { tool: string; isErrored: boolean }): boolean {
+  return isEditTool(entry.tool) && !entry.isErrored;
+}
+
+export function changedPaths(entry: Activity): string[] {
+  if (isSuccessfulEdit(entry)) return entry.target === "" ? [] : [entry.target];
+  if (kindOf(entry.tool) === "Bash" && !entry.isErrored)
+    return (entry.files ?? []).map((file) => file.target);
+  return [];
 }
 
 export function isProgressTool(tool: string): boolean {
@@ -61,3 +78,4 @@ function firstQuestion(fields: Record<string, unknown>): unknown {
 }
 
 export const PROGRESS_TOOL = "mcp__paneline__progress";
+export const RESOLVE_REVIEW_TOOL = "mcp__paneline__resolve_review_comment";

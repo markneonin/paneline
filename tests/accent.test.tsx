@@ -4,6 +4,7 @@ import type { Engine, Mounted } from "claude-code/testing";
 
 import type { Activity } from "../types";
 import type { AgentNode } from "../hooks/agents-model";
+import { pricedSpent, seedOf } from "./fixtures/agent-spend";
 import { palette } from "../hooks/palette";
 import { ENGINE_DEFAULT_GREY, accentOf } from "../hooks/session-color";
 
@@ -13,6 +14,7 @@ type Mount = { findAll: Pane["findAll"] };
 const RED = accentOf("red");
 const DEFAULT_GREY = ENGINE_DEFAULT_GREY;
 const COLUMNS = 100;
+const SHARE_BAR = "▰".repeat(7);
 const NOW = 200_000;
 const store = new Map<string, { value: unknown; version: number }>();
 
@@ -50,7 +52,7 @@ describe("activity pane", () => {
 
     const pane = await mountPane($);
 
-    for (const name of ["Now", "Tool mix", "Timeline"])
+    for (const name of ["Tool mix", "Timeline"])
       expect(await colorsOf(pane, name)).toEqual([palette.userText]);
   });
 
@@ -59,7 +61,7 @@ describe("activity pane", () => {
 
     const pane = await mountPane($);
 
-    expect(await colorsOf(pane, "Now")).toEqual([palette.userText]);
+    expect(await colorsOf(pane, "Timeline")).toEqual([palette.userText]);
   });
 });
 
@@ -80,27 +82,46 @@ describe("files pane", () => {
 });
 
 describe("subagents pane", () => {
-  test("A7 the Spend header is plain white, its bars and the tree guides ignore the session colour, the status dots keep theirs", async ($, on) => {
+  test("A7 the header is plain white, the row bars and the tree guides ignore the session colour, the status dots keep theirs", async ($, on) => {
     worldOf(on, "red");
-    store.set("agents", { value: { a: agent("a", "alpha") }, version: 1 });
+    store.set("agents", {
+      value: { a: agent("a", "alpha"), b: { ...agent("b", "bravo"), parentId: "a" } },
+      version: 1,
+    });
+    seedAgentSpend();
 
     const pane = await mountPane($, "Agents");
 
-    expect(await colorsOf(pane, "Spend")).toEqual([palette.userText]);
-    expect(await colorsOf(pane, "▰▰▰▰▰▰")).toEqual([palette.tool]);
+    const header = await colorsOf(pane, "Agents");
+    expect(header).toContain(palette.userText);
+    expect(header).not.toContain(RED);
+    expect(await colorsOf(pane, SHARE_BAR)).toEqual([palette.tool]);
     expect(await colorsOf(pane, "└─ ")).toEqual([palette.rule]);
     expect(await colorsOf(pane, "✓")).toEqual([palette.ok]);
   });
 
-  test("A8 with no colour set the Spend bar has the same colour", async ($, on) => {
+  test("A8 with no colour set the row bar has the same colour", async ($, on) => {
     worldOf(on, "default");
-    store.set("agents", { value: { a: agent("a", "alpha") }, version: 1 });
+    store.set("agents", {
+      value: { a: agent("a", "alpha"), b: { ...agent("b", "bravo"), parentId: "a" } },
+      version: 1,
+    });
+    seedAgentSpend();
 
     const pane = await mountPane($, "Agents");
 
-    expect(await colorsOf(pane, "▰▰▰▰▰▰")).toEqual([palette.tool]);
+    expect(await colorsOf(pane, SHARE_BAR)).toEqual([palette.tool]);
   });
 });
+
+function seedAgentSpend(): void {
+  const seed = seedOf([
+    pricedSpent("a", "general-purpose", { input: 10_000 }),
+    pricedSpent("b", "general-purpose", { input: 20_000 }),
+  ]);
+  store.set("spend", { value: seed.spend, version: 1 });
+  store.set("sessionUsd", { value: seed.sessionUsd, version: 1 });
+}
 
 function worldOf(on: On, colorName: string): void {
   store.clear();
@@ -121,6 +142,7 @@ function worldOf(on: On, colorName: string): void {
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => ({ value: [] as unknown as AgentInfo[] }));
   on("fs.exists", () => ({ value: true }));
@@ -193,8 +215,6 @@ function agent(id: string, description: string): AgentNode {
     status: "done",
     startedAt: NOW - 10_000,
     ctxTokens: 0,
-    tokensIn: 5_000,
-    tokensOut: 1_000,
     running: [],
   };
 }

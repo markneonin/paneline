@@ -4,6 +4,10 @@ import type { Engine, Mounted, MockClock } from "claude-code/testing";
 
 import type { AgentNode } from "../hooks/agents-model";
 import { palette } from "../hooks/palette";
+import { paneInk } from "../hooks/pane-ink";
+import { coloursOfText, screenRows } from "./band-screen";
+import { pricedSpent, seedOf, unpricedSpent } from "./fixtures/agent-spend";
+import type { Tokens } from "./spend-world";
 import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
@@ -11,6 +15,7 @@ type Node = { type: string; props?: Record<string, unknown>; children?: unknown[
 type Line = { text: string; outerTexts: Node[]; allTexts: Node[]; buttonLabels: unknown[] };
 type EngineListing = { id: string; type: string; description: string; status: string };
 type LoggedLine = { to: string; text: string };
+type Fixture = AgentNode & { spent?: Tokens; priced?: true };
 
 const NOW = 200_000;
 const COLUMNS = 100;
@@ -23,20 +28,20 @@ const SLOW_TEST_MS = 30_000;
 const FLUSH_MS = 1_000;
 const POLL_AND_FLUSH_MS = 4_000;
 const SPENDERS = 7;
-const SPEND_BARS = 6;
 const SHORT_PANE_ROWS = 20;
 const TALL_PANE_ROWS = 40;
-const RUNNING_CARD_ROWS = 3;
-const FINISHED_CARD_ROWS = 2;
-const SPACER_ROWS = 1;
-const NESTING_CELLS = 2;
+const RUNNING_ROW_LINES = 2;
+const FINISHED_ROW_LINES = 2;
+const NESTING_CELLS = 3;
+const BAR_COLUMNS = 101;
+const BAR_CELLS = 10;
 const TAB_COLOR = "clawd_background";
 const TAB_LABELS = ["Activity", "Files", "Agents"];
 const LONG_TEXT =
   "investigate why the nightly export job keeps timing out when the warehouse is under heavy load";
 
 describe("main row", () => {
-  test("A1 the tab starts with a main row showing the main model and the session total", async ($, on) => {
+  test("A1 the session total alone does not show on the main row", async ($, on) => {
     worldOf(on);
     await writeSessionUsd($, 0.42);
 
@@ -44,7 +49,7 @@ describe("main row", () => {
 
     const mainRow = lineContaining(await bodyLines(pane), "main");
     expect(mainRow).toContain(MAIN_MODEL);
-    expect(mainRow).toContain("$0.42");
+    expect(mainRow).not.toContain("$");
   });
 
   test("A2 when the session cost is not known the main row shows no dollar amount", async ($, on) => {
@@ -58,39 +63,134 @@ describe("main row", () => {
   });
 });
 
-describe("agent tree", () => {
-  test("A3 a child that is not last gets a branch, the last one an end mark, and a grandchild sits 2 cells right of its parent", async ($, on) => {
+describe("agent cost", () => {
+  test("A27 a finished agent with a known cost shows ~$0.03 and its tokens on its one row, before the open mark", async ($, on) => {
     worldOf(on);
-    const pane = await paneWithTab($, [
-      agent({ id: "a", description: "alpha", startedAt: NOW - 5_000 }),
-      agent({ id: "a1", parentId: "a", description: "alpha one", startedAt: NOW - 8_000 }),
-      agent({ id: "b", description: "bravo", startedAt: NOW - 9_000 }),
-    ]);
 
-    const rows = await bodyLines(pane);
-    const alpha = lineContaining(rows, "alpha");
-    const alphaOne = lineContaining(rows, "alpha one");
-    const bravo = lineContaining(rows, "bravo");
+    const pane = await paneWithTab($, [finishedWithCost({ input: 10_500 }, true)]);
 
-    expect(alpha.startsWith("├─")).toBe(true);
-    expect(bravo.startsWith("└─")).toBe(true);
-    expect(alphaOne.startsWith("│ └─")).toBe(true);
-    expect(alphaOne.indexOf("└─")).toBe(alpha.indexOf("├─") + 2);
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/\s5s\s+10\.5k ~\$0\.03 ▸$/);
   });
 
-  test("A4 a line runs down from a parent that has later siblings, and not from the last one", async ($, on) => {
+  test("A28 a finished agent whose cost is under one cent shows <$0.01 after its tokens and no other row shows a dollar sign", async ($, on) => {
     worldOf(on);
+
+    const pane = await paneWithTab($, [finishedWithCost({ read: 10_500 }, true)]);
+
+    const rows = await screenBody(pane);
+    expect(rowOf(rows, "alpha")).toMatch(/10\.5k <\$0\.01 ▸$/);
+    expect(
+      rows.filter((row) => row.includes("$") && !row.includes("alpha") && !/^\s*Agents/.test(row)),
+    ).toEqual([]);
+  });
+
+  test("A29 a finished agent whose cost is not known ends its row with the tokens and shows no dollar sign", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [finishedWithCost({ input: 10_500 }, false)]);
+
+    const row = rowOf(await screenBody(pane), "alpha");
+    expect(row).toMatch(/10\.5k ▸$/);
+    expect(row).not.toContain("$");
+  });
+
+  test("A34 a finished agent that cost zero dollars and used no tokens shows no dollar sign on its row", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [agent({ id: "a", description: "alpha" })]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).not.toContain("$");
+  });
+});
+
+describe("agent cost in Spend", () => {
+  test("A30 the row of an agent with 10.5k tokens and a cost of 0.03 shows 10.5k followed by ~$0.03", async ($, on) => {
+    worldOf(on);
+
     const pane = await paneWithTab($, [
-      agent({ id: "a", description: "alpha", startedAt: NOW - 5_000 }),
-      agent({ id: "e", parentId: "a", description: "echo", startedAt: NOW - 8_000 }),
-      agent({ id: "c", description: "charlie", startedAt: NOW - 9_000 }),
-      agent({ id: "d", parentId: "c", description: "delta", startedAt: NOW - 6_000 }),
+      spender("alpha", { input: 10_500 }, true),
+      spender("bravo", { input: 5_000 }, false),
     ]);
 
-    const rows = await bodyLines(pane);
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/10\.5k ~\$0\.03 ▸$/);
+  });
 
-    expect(lineContaining(rows, "echo")).toContain("│");
-    expect(lineContaining(rows, "delta")).not.toContain("│");
+  test("A31 the row of an agent whose cost is under one cent shows <$0.01 after its tokens", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      spender("alpha", { read: 10_500 }, true),
+      spender("bravo", { input: 5_000 }, false),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/10\.5k <\$0\.01 ▸$/);
+  });
+
+  test("A32 the row of an agent whose cost is not known shows its tokens and no dollar sign", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      spender("alpha", { input: 10_500 }, false),
+      spender("bravo", { input: 5_000 }, false),
+    ]);
+
+    const row = rowOf(await screenBody(pane), "alpha");
+    expect(row).toMatch(/10\.5k ▸$/);
+    expect(row).not.toContain("$");
+  });
+
+  test("A33 with one priced and one unpriced agent the tokens of both rows end in the same column and the priced one shows its cost", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      spender("alpha", { input: 10_500 }, true),
+      spender("bravo", { input: 10_400 }, false),
+    ]);
+
+    const rows = await screenBody(pane);
+    const priced = rowOf(rows, "alpha");
+    const unpriced = rowOf(rows, "bravo");
+    expect(priced).toContain("~$0.03");
+    expect(priced.indexOf("10.5k")).toBe(unpriced.indexOf("10.4k"));
+  });
+});
+
+describe("agent tree", () => {
+  test("A3 a child that is not last gets a branch, the last one an end mark, and a grandchild sits 2 cells right of its parent's mark", async ($, on) => {
+    worldOf(on);
+    const pane = await paneWithTab($, [
+      agent({ id: "r", description: "root job", startedAt: NOW - 9_000 }),
+      agent({ id: "e", parentId: "r", description: "echo", startedAt: NOW - 8_000 }),
+      agent({ id: "f", parentId: "r", description: "foxtrot", startedAt: NOW - 7_000 }),
+      agent({ id: "g", parentId: "e", description: "golf", startedAt: NOW - 6_000 }),
+    ]);
+
+    const rows = await screenBody(pane);
+    const kids = [rowOf(rows, "echo"), rowOf(rows, "foxtrot")].sort(
+      (a, b) => rows.indexOf(a) - rows.indexOf(b),
+    );
+    const echo = rowOf(rows, "echo");
+    const golf = rowOf(rows, "golf");
+    expect(kids[0]).toContain("├─");
+    expect(kids[1]).toContain("└─");
+    expect(golf.indexOf("└─")).toBe(echo.search(/├─|└─/) + 2);
+  });
+
+  test("A4 a line runs down from a child that has later siblings, and not from the last one", async ($, on) => {
+    worldOf(on);
+    const pane = await paneWithTab($, [
+      agent({ id: "r", description: "root job", startedAt: NOW - 9_000 }),
+      agent({ id: "k1", parentId: "r", description: "kone", startedAt: NOW - 8_000 }),
+      agent({ id: "k2", parentId: "r", description: "ktwo", startedAt: NOW - 7_000 }),
+      agent({ id: "g1", parentId: "k1", description: "gone", startedAt: NOW - 6_000 }),
+      agent({ id: "g2", parentId: "k2", description: "gtwo", startedAt: NOW - 5_000 }),
+    ]);
+
+    const rows = await screenBody(pane);
+    const firstKid = rows.indexOf(rowOf(rows, "kone")) < rows.indexOf(rowOf(rows, "ktwo"));
+    const [withLater, lastOne] = firstKid ? ["gone", "gtwo"] : ["gtwo", "gone"];
+    expect(rowOf(rows, withLater)).toContain("│");
+    expect(rowOf(rows, lastOne)).not.toContain("│");
   });
 
   test("A5 an agent whose parent is gone from the tree is still listed", async ($, on) => {
@@ -114,7 +214,7 @@ describe("agent tree", () => {
 });
 
 describe("agent cards", () => {
-  test("A6 a finished agent is a title with its description and one dim line with type, a run time that stays at 1m 04s and tokens", async ($, on) => {
+  test("A6 a finished agent is one row with its description, type, a run time that stays at 1m 04s and tokens", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
@@ -124,35 +224,39 @@ describe("agent cards", () => {
         description: "review the diff",
         background: true,
         status: "done",
-        tokensIn: 12_000,
-        tokensOut: 3_000,
+        spent: { input: 12_000, output: 3_000 },
         startedAt: NOW - 100_000,
         endedAt: NOW - 36_000,
       }),
     ]);
 
-    const rows = await rowTexts(pane);
-    const titleAt = rows.findIndex((text) => text.includes("review the diff"));
-    expect(rows[titleAt]).toContain("✓");
-    expect(rows[titleAt]).not.toContain("plugin:review");
-    expect(rows[titleAt + 1]).toContain("plugin:review");
-    expect(rows[titleAt + 1]).toContain("1m 04s");
-    expect(rows[titleAt + 1]).toContain("15k tokens");
+    const row = rowOf(await screenBody(pane), "review the diff");
+    expect(row).toContain("✓");
+    expect(row.indexOf("review the diff")).toBeLessThan(row.indexOf("plugin:review"));
+    expect(row).toContain("1m 04s");
+    expect(row).toContain("15k");
   });
 
-  test("A6b a running card is 3 rows and a finished card is 2", async ($, on) => {
+  test("A6b an agent is one row, a running agent with a context size and a tool adds one line, and nothing sits between two rows", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
-      agent({ id: "a", description: "alpha", status: "running", startedAt: NOW - 9_000 }),
+      agent({
+        id: "a",
+        description: "alpha",
+        status: "running",
+        startedAt: NOW - 9_000,
+        ctxTokens: 48_000,
+        running: [{ callId: "c1", tool: "Bash", target: "git status" }],
+      }),
       agent({ id: "b", description: "bravo", status: "done", startedAt: NOW - 8_000 }),
     ]);
 
-    const rows = await rowTexts(pane);
+    const rows = (await screenBody(pane)).filter((text) => text !== "");
     const alphaAt = rows.findIndex((text) => text.includes("alpha"));
     const bravoAt = rows.findIndex((text) => text.includes("bravo"));
-    expect(bravoAt - alphaAt).toBe(RUNNING_CARD_ROWS + SPACER_ROWS);
-    expect(rows.length - bravoAt).toBe(FINISHED_CARD_ROWS);
+    expect(bravoAt - alphaAt).toBe(RUNNING_ROW_LINES);
+    expect(rows.length - bravoAt).toBe(FINISHED_ROW_LINES);
   });
 
   test("A6c a running card comes first, then the finished ones with the most recently ended on top", async ($, on) => {
@@ -180,7 +284,7 @@ describe("agent cards", () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  test("A7 a running agent shows type, model and effort on its first dim line, and time, context and only the first running tool on its second", async ($, on) => {
+  test("A7 a running agent shows its type on its row, and context and only the first running tool on the line under it", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
@@ -192,8 +296,7 @@ describe("agent cards", () => {
         model: "haiku",
         effort: "high",
         ctxTokens: 48_000,
-        tokensIn: 12_000,
-        tokensOut: 3_000,
+        spent: { input: 12_000, output: 3_000 },
         running: [
           { callId: "c1", tool: "Bash", target: "git status" },
           { callId: "c2", tool: "Read", target: "/work/src/index.ts" },
@@ -201,15 +304,111 @@ describe("agent cards", () => {
       }),
     ]);
 
-    const rows = await rowTexts(pane);
-    const titleAt = rows.findIndex((text) => text.includes("scan repo"));
-    expect(rows[titleAt]).not.toContain("haiku");
-    expect(rows[titleAt + 1]).toContain("Explore");
-    expect(rows[titleAt + 1]).toContain("haiku");
-    expect(rows[titleAt + 1]).toContain("high");
-    expect(rows[titleAt + 2]).toContain("ctx 48k");
-    expect(rows[titleAt + 2]).toContain("Bash: git status");
-    expect(rows[titleAt + 2]).not.toContain("Read");
+    const rows = await screenBody(pane);
+    const context = rowOf(rows, "ctx 48k");
+    expect(rowOf(rows, "scan repo")).toContain("Explore");
+    expect(context).toContain("Bash: git status");
+    expect(context).not.toContain("Read");
+  });
+
+  test("A7b the row of a running agent shows its type, model and effort after its description", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({
+        id: "a",
+        description: "scan repo",
+        status: "running",
+        model: "claude-opus-4-5-20251101",
+        effort: "high",
+      }),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "scan repo")).toContain(
+      "scan repo  general-purpose · opus 4.5 · high",
+    );
+  });
+
+  test("A7c the row of a finished agent shows its type, model and effort after its description", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "review the diff", model: "haiku", effort: "low" }),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "review the diff")).toContain(
+      "review the diff  general-purpose · haiku · low",
+    );
+  });
+
+  test("A7d a row whose effort is unknown shows only the model after the type", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "review the diff", model: "haiku" }),
+    ]);
+
+    const row = rowOf(await screenBody(pane), "review the diff");
+    expect(row).toContain("general-purpose · haiku");
+    expect(row).not.toContain("haiku ·");
+  });
+
+  test("A7e a row whose model is unknown shows only the effort after the type", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "review the diff", model: "", effort: "high" }),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "review the diff")).toContain("general-purpose · high");
+  });
+
+  test("A7g a long description of a running agent is clipped with an ellipsis and its model stays while the name is cut", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab(
+      $,
+      [
+        agent({
+          id: "a",
+          description: LONG_TEXT,
+          status: "running",
+          model: "haiku",
+          effort: "high",
+        }),
+      ],
+      NARROW_COLUMNS,
+    );
+
+    const title = rowOf(await screenBody(pane, NARROW_COLUMNS), "● running");
+    expect(title).toContain("…");
+    expect(title).toContain("haiku");
+  });
+
+  test("A7h a short description of a running agent is not clipped", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab(
+      $,
+      [agent({ id: "a", description: "alpha", status: "running", model: "haiku", effort: "high" })],
+      NARROW_COLUMNS,
+    );
+
+    const title = rowOf(await screenBody(pane, NARROW_COLUMNS), "alpha");
+    expect(title).toContain("● running alpha ");
+    expect(title).not.toContain("…");
+  });
+
+  test("A26 the card title shows the description in the text colour and the model and effort after it in the muted colour, inside the title button", async ($, on) => {
+    worldOf(on);
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "alpha", model: "haiku", effort: "high" }),
+    ]);
+
+    const texts = allTextsIn(await titleButtonOf(pane, "alpha"));
+
+    expect(colorOfTextIn(texts, "alpha")).toBe(palette.text);
+    expect(colorOfTextIn(texts, " · haiku · high")).toBe(palette.muted);
   });
 
   test("A8 the run time of a running agent counts up every second with nothing else happening", async ($, on) => {
@@ -217,42 +416,37 @@ describe("agent cards", () => {
     const pane = await paneWithTab($, [
       agent({ id: "a", description: "scan repo", status: "running", startedAt: NOW - 5_000 }),
     ]);
-    const before = await rowTexts(pane);
+    const before = rowOf(await screenBody(pane), "scan repo");
 
     await clock.advance(2 * SECOND);
 
-    const after = await rowTexts(pane);
-    const timeAt = before.findIndex((text) => text.includes("scan repo")) + 2;
-    expect(before[timeAt]).toContain("5s");
-    expect(after[timeAt]).toContain("7s");
+    const after = rowOf(await screenBody(pane), "scan repo");
+    expect(before).toMatch(/\s5s\s/);
+    expect(after).toMatch(/\s7s\s/);
   });
 
-  test("A21 every card has an empty spacer above it and the guide lines run unbroken between the first card and the last", async ($, on) => {
+  test("A21 rows of a tree have no empty row between them and the guide lines run unbroken from a child to its last sibling", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
-      agent({ id: "a", description: "alpha", status: "running", startedAt: NOW - 9_000 }),
-      agent({
-        id: "a1",
-        parentId: "a",
-        description: "alpha one",
-        status: "done",
-        startedAt: NOW - 8_000,
-      }),
-      agent({ id: "b", description: "bravo", status: "done", startedAt: NOW - 7_000 }),
+      agent({ id: "r", description: "root job", status: "running", startedAt: NOW - 9_000 }),
+      agent({ id: "k1", parentId: "r", description: "kone", startedAt: NOW - 8_000 }),
+      agent({ id: "g1", parentId: "k1", description: "gone", startedAt: NOW - 7_000 }),
+      agent({ id: "k2", parentId: "r", description: "ktwo", startedAt: NOW - 6_000 }),
     ]);
 
-    const rows = await rowTexts(pane);
-    const alphaAt = rows.findIndex((text) => text.includes("alpha") && !text.includes("alpha one"));
-    const alphaOneAt = rows.findIndex((text) => text.includes("alpha one"));
-    const bravoAt = rows.findIndex((text) => text.includes("bravo"));
-    expect(rows[alphaAt - 1]?.trimEnd()).toBe("│");
-    expect(rows[alphaOneAt - 1]?.trimEnd()).toBe("│ │");
-    expect(rows[bravoAt - 1]?.trimEnd()).toBe("│");
-    expect(rows.slice(alphaAt + 1, bravoAt).filter((text) => !text.startsWith("│"))).toEqual([]);
+    const rows = (await screenBody(pane)).filter((text) => text !== "");
+    const rootAt = rows.findIndex((text) => text.includes("root job"));
+    const treeRows = [rowOf(rows, "kone"), rowOf(rows, "gone"), rowOf(rows, "ktwo")];
+    const lastAt = Math.max(...treeRows.map((row) => rows.indexOf(row)));
+    expect(lastAt - rootAt).toBe(treeRows.length);
+    const grand = rowOf(rows, "gone");
+    const kids = [rowOf(rows, "kone"), rowOf(rows, "ktwo")];
+    const firstKidIsParent = rows.indexOf(kids[0] as string) < rows.indexOf(kids[1] as string);
+    expect(grand.includes("│")).toBe(firstKidIsParent);
   });
 
-  test("A22 a nested card starts 2 cells right of its parent, on its title and on its dim line", async ($, on) => {
+  test("A22 a nested row starts its name 3 cells right of its parent's name", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
@@ -273,35 +467,31 @@ describe("agent cards", () => {
       }),
     ]);
 
-    const rows = await rowTexts(pane);
-    const parentAt = rows.findIndex((text) => text.includes("parent job"));
-    const childAt = rows.findIndex((text) => text.includes("child job"));
-    expect(rows[childAt]?.indexOf("child job")).toBe(
-      (rows[parentAt]?.indexOf("parent job") ?? 0) + NESTING_CELLS,
-    );
-    expect(rows[childAt + 1]?.indexOf("Plan")).toBe(
-      (rows[parentAt + 1]?.indexOf("Explore") ?? 0) + NESTING_CELLS,
+    const rows = await screenBody(pane);
+    expect(rowOf(rows, "child job").indexOf("child job")).toBe(
+      rowOf(rows, "parent job").indexOf("parent job") + NESTING_CELLS,
     );
   });
 
-  test("A25 one blank row sits above the Spend header", async ($, on) => {
+  test("A25 one blank row sits above the hint under the list", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
-      agent({ id: "a", description: "alpha", tokensIn: 9_000, tokensOut: 1_000 }),
+      agent({ id: "a", description: "alpha", spent: { input: 9_000, output: 1_000 } }),
+      agent({ id: "b", description: "bravo", spent: { input: 4_000, output: 1_000 } }),
     ]);
 
-    const rows = await rowTexts(pane);
-    const spendAt = rows.findIndex((text) => text.startsWith("Spend"));
-    expect(rows[spendAt - 1]?.trim()).toBe("");
-    expect(rows[spendAt - 2]?.trim()).not.toBe("");
+    const rows = await screenBody(pane);
+    const hintAt = rows.findIndex((text) => text.includes("click an agent"));
+    expect(rows[hintAt - 1]?.trim()).toBe("");
+    expect(rows[hintAt - 2]?.trim()).not.toBe("");
   });
 });
 
 describe("a pane too short for every card", () => {
-  test("A23 at height 20 the oldest finished cards collapse into one row that counts exactly the cards left out", async ($, on) => {
+  test("A23 at height 20 the oldest finished rows collapse into one row that counts exactly the rows left out", async ($, on) => {
     worldOf(on);
-    const finished = Array.from({ length: 8 }, (_, i) =>
+    const finished = Array.from({ length: 20 }, (_, i) =>
       agent({
         id: `f${i}`,
         description: `finished ${i}`,
@@ -321,19 +511,19 @@ describe("a pane too short for every card", () => {
       SHORT_PANE_ROWS,
     );
 
-    const rows = await rowTexts(pane);
+    const rows = (await screenBody(pane)).map((text) => text.trim()).filter((text) => text !== "");
     const shown = rows.filter((text) => text.includes("finished "));
     const hidden = Number(rows.find((text) => /^… \d+ more done$/.test(text))?.match(/\d+/)?.[0]);
-    expect(rows.length).toBeLessThan(SHORT_PANE_ROWS);
+    expect(rows.length).toBeLessThanOrEqual(SHORT_PANE_ROWS);
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.length + hidden).toBe(finished.length);
-    expect(shown.some((text) => text.includes("finished 7"))).toBe(true);
+    expect(shown.some((text) => text.includes("finished 19"))).toBe(true);
     expect(shown.some((text) => text.includes("finished 0"))).toBe(false);
   });
 
-  test("A24 at height 20 six running cards are all drawn whole and all finished ones collapse", async ($, on) => {
+  test("A24 at height 20 sixteen running rows are all drawn whole and all finished ones collapse", async ($, on) => {
     worldOf(on);
-    const running = Array.from({ length: 6 }, (_, i) =>
+    const running = Array.from({ length: 16 }, (_, i) =>
       agent({ id: `r${i}`, description: `busy ${i}`, status: "running", startedAt: NOW - 5_000 }),
     );
     const finished = Array.from({ length: 3 }, (_, i) =>
@@ -342,15 +532,10 @@ describe("a pane too short for every card", () => {
 
     const pane = await paneWithTab($, [...running, ...finished], COLUMNS, SHORT_PANE_ROWS);
 
-    const rows = await rowTexts(pane);
-    const titleAts = running.map((one) =>
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      rows.findIndex((text) => text.includes(one.description ?? "")),
-    );
-    expect(titleAts.every((at) => at >= 0)).toBe(true);
-    expect(titleAts.map((at) => rows[at + 2])).toEqual(
-      titleAts.map(() => expect.stringContaining("5s")),
-    );
+    const rows = (await screenBody(pane)).map((text) => text.trim());
+    const busy = rows.filter((text) => text.includes("busy "));
+    expect(busy).toHaveLength(running.length);
+    expect(busy.every((text) => /\s5s\s/.test(text))).toBe(true);
     expect(rows.filter((text) => text.includes("finished "))).toEqual([]);
     expect(rows).toContain("… 3 more done");
   });
@@ -381,6 +566,55 @@ describe("status marks", () => {
     expect(await colorsOfMark(pane, "✗")).toContain(palette.failed);
   });
 
+  test("S6 a done agent's row reads done after the ✓, in the same green", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [agent({ id: "a", description: "alpha", status: "done" })]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/✓ done +alpha/);
+    expect(coloursOfText(await pane.drawn(), "✓ done")).toEqual([paneInk().ok]);
+  });
+
+  test("S6 a failed agent's row reads failed after the ✗, in the red", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [agent({ id: "a", description: "alpha", status: "failed" })]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/✗ failed +alpha/);
+    expect(coloursOfText(await pane.drawn(), "✗ failed")).toEqual([paneInk().failed]);
+  });
+
+  test("S6 a killed agent's row reads killed after the ✗, in the red", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [agent({ id: "a", description: "alpha", status: "killed" })]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/✗ killed +alpha/);
+    expect(coloursOfText(await pane.drawn(), "✗ killed")).toEqual([paneInk().failed]);
+  });
+
+  test("S6 a running agent's row reads running after the ●, in the running colour", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "alpha", status: "running" }),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/● running +alpha/);
+    expect(coloursOfText(await pane.drawn(), "● running")).toEqual([paneInk().tool]);
+  });
+
+  test("S6 a waiting agent's row reads waiting after the ●, in the alert colour", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "alpha", status: "waiting" }),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/● waiting +alpha/);
+    expect(coloursOfText(await pane.drawn(), "● waiting")).toEqual([paneInk().alert]);
+  });
+
   test("A12 an agent that waits for the owner shows an amber dot", async ($, on) => {
     worldOf(on);
 
@@ -393,60 +627,191 @@ describe("status marks", () => {
 });
 
 describe("spend", () => {
-  test("A13 with 7 agents Spend shows 6 bars, the biggest first, and leaves the smallest out", async ($, on) => {
+  test("A13 with 7 agents every agent has its own row with its tokens", async ($, on) => {
     worldOf(on);
     const spenders = Array.from({ length: SPENDERS }, (_, i) =>
       agent({
         id: `s${i + 1}`,
         description: `task ${i + 1}`,
-        tokensIn: (i + 1) * 10_000 - 1_000,
-        tokensOut: 1_000,
+        spent: { input: (i + 1) * 10_000 - 1_000, output: 1_000 },
       }),
     );
 
     const pane = await paneWithTab($, spenders);
 
-    const counts = (await spendLines(pane)).map((row) =>
-      textOf(row.allTexts[row.allTexts.length - 1] as Node),
-    );
-    expect(counts).toHaveLength(SPEND_BARS);
-    expect(counts).toEqual(["70k", "60k", "50k", "40k", "30k", "20k"]);
+    const rows = await screenBody(pane);
+    const counts = spenders.map((one) => /(\d+k) ▸$/.exec(rowOf(rows, one.description))?.[1]);
+    expect(counts).toEqual(["10k", "20k", "30k", "40k", "50k", "60k", "70k"]);
   });
 
-  test("A13b spend rows say what each agent did", async ($, on) => {
+  test("A13b the rows say what each agent did", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
       agent({
         id: "big",
         description: "migrate the billing tables",
-        tokensIn: 39_000,
-        tokensOut: 1_000,
+        spent: { input: 39_000, output: 1_000 },
       }),
       agent({
         id: "small",
         description: "write the release notes",
-        tokensIn: 9_000,
-        tokensOut: 1_000,
+        spent: { input: 9_000, output: 1_000 },
       }),
     ]);
 
-    const [biggest, smaller] = await spendLines(pane);
-    expect(biggest?.text).toContain("migrate the billing tables");
-    expect(smaller?.text).toContain("write the release notes");
+    const rows = await screenBody(pane);
+    expect(rowOf(rows, "migrate the billing tables")).toMatch(/40k ▸$/);
+    expect(rowOf(rows, "write the release notes")).toMatch(/10k ▸$/);
   });
 
-  test("A14 the biggest spender has a full bar and a smaller one has a grey empty rest", async ($, on) => {
+  test("A14 at 101 columns the bigger spender has more filled cells in its 10 cell bar and the smaller one has a grey empty rest", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab(
+      $,
+      [
+        agent({ id: "big", description: "big task", spent: { input: 39_000, output: 1_000 } }),
+        agent({ id: "small", description: "small task", spent: { input: 9_000, output: 1_000 } }),
+      ],
+      BAR_COLUMNS,
+    );
+
+    const rows = await screenBody(pane, BAR_COLUMNS);
+    const [big, small] = [rowOf(rows, "big task"), rowOf(rows, "small task")];
+    expect(cellsOf(big, "▰") + cellsOf(big, "▱")).toBe(BAR_CELLS);
+    expect(cellsOf(small, "▰") + cellsOf(small, "▱")).toBe(BAR_CELLS);
+    expect(cellsOf(big, "▰")).toBeGreaterThan(cellsOf(small, "▰"));
+    expect(coloursOfText(await pane.drawn(), "▱")).toEqual([paneInk().meterEmpty]);
+  });
+});
+
+describe("agents read at a glance", () => {
+  test("V9 a finished row shows its name in the text colour and its words dim", async ($, on) => {
     worldOf(on);
 
     const pane = await paneWithTab($, [
-      agent({ id: "big", description: "big task", tokensIn: 39_000, tokensOut: 1_000 }),
-      agent({ id: "small", description: "small task", tokensIn: 9_000, tokensOut: 1_000 }),
+      agent({
+        id: "a",
+        type: "general-purpose",
+        description: "review the diff",
+        status: "done",
+        spent: { input: 10_000, output: 500 },
+        startedAt: NOW - 5_000,
+        endedAt: NOW,
+      }),
     ]);
 
-    const [biggest, smaller] = await spendLines(pane);
-    expect(emptyRestOf(biggest)).toEqual([]);
-    expect(emptyRestOf(smaller)).not.toEqual([]);
+    const drawn = await pane.drawn();
+    expect(coloursOfText(drawn, "review the diff")).toEqual([paneInk().text]);
+    expect(coloursOfText(drawn, "general-purpose")).toEqual([paneInk().muted]);
+    expect(coloursOfText(drawn, "10.5k")).toEqual([paneInk().muted]);
+  });
+
+  test("V10 a running agent's line under its row shows its context size in the text colour, its label dim, its target dim and its tool name in the tool colour", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({
+        id: "a",
+        type: "Explore",
+        description: "scan repo",
+        status: "running",
+        ctxTokens: 12_300,
+        startedAt: NOW - 5_000,
+        running: [{ callId: "c1", tool: "Read", target: "hooks/x.ts" }],
+      }),
+    ]);
+
+    const drawn = await pane.drawn();
+    expect(coloursOfText(drawn, "ctx")).toEqual([paneInk().muted]);
+    expect(coloursOfText(drawn, "12.3k")).toEqual([paneInk().text]);
+    expect(coloursOfText(drawn, "Read")).toEqual([paneInk().tool]);
+    expect(coloursOfText(drawn, "hooks/x.ts")).toEqual([paneInk().muted]);
+  });
+
+  test("V11 a waiting agent's row starts with its status word and then its name and type", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "w", description: "wait for owner", status: "waiting", startedAt: NOW - 5_000 }),
+    ]);
+
+    expect(rowOf(await screenBody(pane), "wait for owner")).toMatch(
+      /^ ?● waiting wait for owner\s+general-purpose/,
+    );
+  });
+
+  test("V13 an idle agent row shows a hollow dim circle and no running dot", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [agent({ id: "a", description: "alpha", status: "idle" })]);
+
+    expect(rowOf(await screenBody(pane), "alpha")).toMatch(/^ ?○/);
+    expect(rowOf(await screenBody(pane), "alpha")).not.toContain("●");
+    expect(coloursOfText(await pane.drawn(), "○")).toEqual([paneInk().muted]);
+  });
+
+  test("V16 with two agents that spent tokens each row draws a 10 cell bar once the pane is 101 columns wide", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, twoSpenders(), BAR_COLUMNS);
+
+    const rows = await screenBody(pane, BAR_COLUMNS);
+    const cells = ["big task", "small task"].map((name) => barCellsOf(rowOf(rows, name)));
+    expect(cells).toEqual([BAR_CELLS, BAR_CELLS]);
+  });
+
+  test("V24 when the pane is 100 columns wide each spender's bar is a 10 cell bar on the line under its row", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, twoSpenders(), BAR_COLUMNS - 1);
+
+    const rows = await screenBody(pane, BAR_COLUMNS - 1);
+    const bars = rows.filter((row) => row.includes("of agent tokens"));
+    expect(bars.map(barCellsOf)).toEqual([BAR_CELLS, BAR_CELLS]);
+  });
+
+  test("V17 the token counts of the rows end in the same column", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, twoSpenders());
+
+    const rows = await screenBody(pane);
+    const ends = [rowOf(rows, "big task"), rowOf(rows, "small task")].map((row) =>
+      row.indexOf(" ▸"),
+    );
+    expect(ends[0]).toBe(ends[1]);
+    expect(rowOf(rows, "big task")).toMatch(/ 12k ▸$/);
+    expect(rowOf(rows, "small task")).toMatch(/9\.5k ▸$/);
+  });
+
+  test("V22 with one agent that spent tokens its row is the whole share: 100 per cent in a full bar", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "alpha", spent: { input: 9_000, output: 1_000 } }),
+    ]);
+
+    const rows = await screenBody(pane);
+    const bar = rowOf(rows, "of agent tokens");
+    expect(bar).toContain("100%");
+    expect(cellsOf(bar, "▰")).toBe(BAR_CELLS);
+    expect(cellsOf(bar, "▱")).toBe(0);
+  });
+
+  test("V23 with two agents and tokens spent by only one the spender's bar is full and the other row has no tokens", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneWithTab($, [
+      agent({ id: "a", description: "alpha", spent: { input: 9_000, output: 1_000 } }),
+      agent({ id: "b", description: "bravo" }),
+    ]);
+
+    const rows = await screenBody(pane);
+    expect(rowOf(rows, "alpha")).toMatch(/10k ▸$/);
+    expect(rowOf(rows, "bravo")).not.toMatch(/\dk? ▸$/);
+    expect(cellsOf(rowOf(rows, "of agent tokens"), "▰")).toBe(BAR_CELLS);
   });
 });
 
@@ -526,7 +891,7 @@ describe("live updates", () => {
     },
   );
 
-  test("A20 a few seconds later the tab shows the killed agent as killed and an agent the engine lists that it never saw", async ($, on) => {
+  test("A20 a few seconds later the tab shows the engine-killed agent as stopped, not failed, and an agent the engine lists that it never saw", async ($, on) => {
     const clock = worldOf(on, [
       { id: "spawned-1", type: "general-purpose", description: "tracked job", status: "killed" },
       { id: "forked", type: "fork", description: "forked skill", status: "running" },
@@ -538,7 +903,8 @@ describe("live updates", () => {
 
     await clock.advance(POLL_AND_FLUSH_MS);
 
-    expect(await colorsOfMark(pane, "✗")).toContain(palette.failed);
+    expect(await colorsOfMark(pane, "✗")).not.toContain(palette.failed);
+    expect(await colorsOfMark(pane, "○")).toContain(paneInk().muted);
     expect(lineContaining(await bodyLines(pane), "forked skill")).not.toBe("");
   });
 });
@@ -570,6 +936,7 @@ function worldOf(on: On, listed: EngineListing[] = []): MockClock {
   }));
   on("agent.spawn", () => ({ model: "sonnet", agentId: `spawned-${++spawnCount}` }));
   on("session.model", () => ({ value: MAIN_MODEL }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => ({ value: listed as unknown as AgentInfo[] }));
   on("ui.render", { component: "Pane" }, ($, e) => {
@@ -593,7 +960,9 @@ async function spawnAgent($: Engine, clock: MockClock, description: string): Pro
   await clock.advance(FLUSH_MS);
 }
 
-function agent(fields: Partial<AgentNode> & { id: string }): AgentNode {
+function agent(
+  fields: Partial<AgentNode> & { id: string; spent?: Tokens; priced?: true },
+): Fixture {
   return {
     type: "general-purpose",
     description: fields.id,
@@ -602,11 +971,37 @@ function agent(fields: Partial<AgentNode> & { id: string }): AgentNode {
     status: "done",
     startedAt: NOW - 10_000,
     ctxTokens: 0,
-    tokensIn: 0,
-    tokensOut: 0,
     running: [],
     ...fields,
   };
+}
+
+function finishedWithCost(spent: Tokens, priced: boolean): Fixture {
+  return agent({
+    id: "a",
+    description: "alpha",
+    spent,
+    ...(priced && { priced: true as const }),
+    startedAt: NOW - 10_000,
+    endedAt: NOW - 5_000,
+  });
+}
+
+function spender(description: string, spent: Tokens, priced: boolean): Fixture {
+  return agent({
+    id: description,
+    type: description,
+    description,
+    spent,
+    ...(priced && { priced: true as const }),
+  });
+}
+
+function twoSpenders(): AgentNode[] {
+  return [
+    agent({ id: "big", description: "big task", spent: { input: 11_000, output: 1_000 } }),
+    agent({ id: "small", description: "small task", spent: { input: 9_000, output: 500 } }),
+  ];
 }
 
 function longFixture(): AgentNode[] {
@@ -620,8 +1015,7 @@ function longFixture(): AgentNode[] {
       model: "sonnet",
       effort: "high",
       ctxTokens: 48_000,
-      tokensIn: 12_000,
-      tokensOut: 3_000,
+      spent: { input: 12_000, output: 3_000 },
       startedAt: NOW - 9_000,
       running: [{ callId: "c1", tool: "Bash", target: LONG_TEXT }],
     }),
@@ -669,7 +1063,7 @@ function mountPane($: Engine, columns: number, rows: number = TALL_PANE_ROWS): P
 
 async function paneWithTab(
   $: Engine,
-  agents: AgentNode[],
+  agents: Fixture[],
   columns: number = COLUMNS,
   rows: number = TALL_PANE_ROWS,
 ): Promise<Pane> {
@@ -679,8 +1073,17 @@ async function paneWithTab(
   return pane;
 }
 
-function writeAgents($: Engine, agents: AgentNode[]): Promise<unknown> {
-  return writeKey("agents", Object.fromEntries(agents.map((one) => [one.id, one])));
+async function writeAgents($: Engine, agents: Fixture[]): Promise<void> {
+  const nodes = agents.map(({ spent: _spent, priced: _priced, ...node }): AgentNode => node);
+  await writeKey("agents", Object.fromEntries(nodes.map((one) => [one.id, one])));
+  const seed = seedOf(
+    agents.flatMap(({ id, type, spent, priced }) =>
+      spent === undefined ? [] : [(priced === true ? pricedSpent : unpricedSpent)(id, type, spent)],
+    ),
+  );
+  if (seed.sessionUsd === 0) return;
+  await writeKey("spend", seed.spend);
+  await writeSessionUsd($, seed.sessionUsd);
 }
 
 function writeSessionUsd($: Engine, usd: number): Promise<unknown> {
@@ -748,11 +1151,6 @@ async function rowTexts(pane: Pane): Promise<string[]> {
   return (await bodyLines(pane)).map((line) => line.text);
 }
 
-async function spendLines(pane: Pane): Promise<Line[]> {
-  const lines = await bodyLines(pane);
-  return lines.slice(lines.findIndex((line) => line.text.startsWith("Spend")) + 1);
-}
-
 async function expectEveryLineIsOneLine(pane: Pane): Promise<void> {
   const lines = await bodyLines(pane);
   const unwrapped = lines
@@ -767,10 +1165,19 @@ function lineContaining(lines: Line[], word: string): string {
   return lines.find((line) => line.text.includes(word))?.text ?? "";
 }
 
-function emptyRestOf(line: Line | undefined): Node[] {
-  return (line?.allTexts ?? []).filter(
-    (text) => text.props?.color === palette.meterEmpty && textOf(text) !== "",
-  );
+async function titleButtonOf(pane: Pane, title: string): Promise<Node> {
+  const buttons = await pane.findAll({ type: "Button" });
+  const button = buttons.find((one) => String(one.props.label).includes(title));
+  expect(button, `a title button for ${title}`).toBeDefined();
+  return button as Node;
+}
+
+function colorOfTextIn(texts: Node[], text: string): unknown {
+  return texts.find((node) => ownTextOf(node).includes(text))?.props?.color;
+}
+
+function ownTextOf(node: Node): string {
+  return (node.children ?? []).filter((child) => typeof child === "string").join("");
 }
 
 function linesOf(node: Node): Line[] {
@@ -828,4 +1235,24 @@ function textOf(node: Node): string {
   return (node.children ?? [])
     .map((child) => (typeof child === "string" ? child : textOf(child as Node)))
     .join("");
+}
+
+async function screenBody(pane: Pane, columns: number = COLUMNS): Promise<string[]> {
+  return screenRows(await pane.drawn(), columns)
+    .slice(1)
+    .map((row) => row.trimEnd());
+}
+
+function rowOf(rows: string[], word: string): string {
+  const row = rows.find((text) => text.includes(word));
+  expect(row, `a row with ${word}`).toBeDefined();
+  return row ?? "";
+}
+
+function cellsOf(row: string, glyph: string): number {
+  return Array.from(row).filter((one) => one === glyph).length;
+}
+
+function barCellsOf(row: string): number {
+  return cellsOf(row, "▰") + cellsOf(row, "▱");
 }

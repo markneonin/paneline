@@ -106,6 +106,7 @@ function worldOf(on: On, listed: object[] = []): World {
   }));
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);

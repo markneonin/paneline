@@ -77,7 +77,7 @@ describe("pane smoke bugs", () => {
     expect(displayWidth(root as string)).toBeLessThanOrEqual(BODY_COLUMNS);
   });
 
-  test("W5 a subagent report and a question show their full tool name and their text", async ($, on) => {
+  test("W5 a subagent report draws no Timeline row while a question and an agent call show their full tool name and text", async ($, on) => {
     activityWorld(on);
     await $.tool.call({
       tool: "SubagentHandback",
@@ -101,7 +101,6 @@ describe("pane smoke bugs", () => {
     expect(await timelineCells(pane)).toEqual([
       ["✓", "Agent", "Count .py files"],
       ["✓", "AskUserQuestion", "Which colour?"],
-      ["✓", "SubagentHandback", "Found 2 .py files"],
     ]);
   });
 });
@@ -119,6 +118,7 @@ function paneWorld(on: On): void {
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => ({ value: [] }));
   on("fs.exists", () => ({ value: true }));
@@ -146,6 +146,7 @@ function bandWorld(on: On) {
   const clock = mock.clock(on, { now: 1_000 });
   mock.env(on, { HOME: "/h/u" });
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work/proj" }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
@@ -175,6 +176,7 @@ async function bandRows($: Engine, maxRows: number): Promise<string[]> {
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows,
       bodyColumns: BAND_COLUMNS,
@@ -244,7 +246,7 @@ async function fileRows(pane: Pane): Promise<string[]> {
 
 async function timelineCells(pane: Pane): Promise<string[][]> {
   const tree = (await pane.drawn()) as unknown as Node;
-  return callRowsIn(tree).map((row) => elementsIn(row).slice(0, 3).map(cellText));
+  return callRowsIn(tree).map((row) => elementsIn(row).slice(1, 4).map(cellText));
 }
 
 function callRowsIn(node: Node): Node[] {

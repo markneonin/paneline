@@ -2,7 +2,10 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import type { On } from "claude-code";
 import type { Engine } from "claude-code/testing";
 
+import { palette } from "../hooks/palette";
 import { ENGINE_DEFAULT_GREY, accentOf } from "../hooks/session-color";
+import { THEMES } from "./theme-rgb";
+import { isHeavy } from "./weight";
 
 type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] };
 
@@ -12,6 +15,29 @@ const RED = accentOf("red");
 const BLUE = accentOf("blue");
 const DEFAULT_GREY = ENGINE_DEFAULT_GREY;
 const TITLE_CHIP_TEXT = "clawd_background";
+const PANE_FILL = palette.panel;
+const CLAWD_BACKGROUND = "clawd_background";
+const PROMPT_BORDER = "promptBorder";
+const LIGHT_ANSI = "light-ansi";
+const WCAG_AA_RATIO = 4.5;
+const LUMINANCE_OFFSET = 0.05;
+const CHANNEL_MAX = 255;
+const SRGB_LINEAR_CUTOFF = 0.03928;
+const SRGB_LINEAR_DIVISOR = 12.92;
+const SRGB_OFFSET = 0.055;
+const SRGB_SCALE = 1.055;
+const SRGB_GAMMA = 2.4;
+const LUMA_R = 0.2126;
+const LUMA_G = 0.7152;
+const LUMA_B = 0.0722;
+const OTHER_THEMES = [
+  "dark",
+  "light",
+  "dark-ansi",
+  "auto",
+  "dark-daltonized",
+  "light-daltonized",
+] as const;
 
 describe("chips follow the session colour", () => {
   test("K1 the chips take the colour recorded in the transcript", async ($, on) => {
@@ -128,6 +154,50 @@ describe("the pane tab follows the session colour", () => {
       text: TITLE_CHIP_TEXT,
     });
   });
+
+  test("K10 on light-ansi with no colour the selected tab is an inverse block, white bold name on a black fill", async ($, on) => {
+    const world = worldOf(on, [], LIGHT_ANSI);
+    await $.session.start(SESSION_START);
+    await $.classic.Stop(stop());
+    await world.settle();
+
+    expectInverseTab(await selectedTabLabel($));
+  });
+
+  test("K11 on light-ansi under /color red the selected tab is the red accent with bold black text", async ($, on) => {
+    const world = worldOf(on, ["red"], LIGHT_ANSI);
+    await $.session.start(SESSION_START);
+    await $.classic.Stop(stop());
+    await world.settle();
+
+    const label = await selectedTabLabel($);
+    expect(label?.backgroundColor).toBe(RED);
+    expect(label?.color).toBe(TITLE_CHIP_TEXT);
+    expect(isHeavy(label)).toBe(true);
+  });
+
+  for (const theme of OTHER_THEMES) {
+    test(`K12 on ${theme} with no colour the selected tab keeps the engine default grey with bold clawd_background text`, async ($, on) => {
+      const world = worldOf(on, [], theme);
+      await $.session.start(SESSION_START);
+      await $.classic.Stop(stop());
+      await world.settle();
+
+      const label = await selectedTabLabel($);
+      expect(label?.backgroundColor).toBe(DEFAULT_GREY);
+      expect(label?.color).toBe(TITLE_CHIP_TEXT);
+      expect(isHeavy(label)).toBe(true);
+    });
+  }
+
+  test("K13 on light-ansi after /color red then /color default the selected tab is an inverse block again", async ($, on) => {
+    const world = worldOf(on, ["red", "default"], LIGHT_ANSI);
+    await $.session.start(SESSION_START);
+    await $.classic.Stop(stop());
+    await world.settle();
+
+    expectInverseTab(await selectedTabLabel($));
+  });
 });
 
 describe("the side pane", () => {
@@ -154,11 +224,17 @@ describe("the side pane", () => {
   });
 });
 
-function worldOf(on: On, initial: string[]): { entries: string[]; settle: () => Promise<void> } {
+function worldOf(
+  on: On,
+  initial: string[],
+  theme = "dark",
+): { entries: string[]; settle: () => Promise<void> } {
   const clock = mock.clock(on);
   const entries = [...initial];
   mock.env(on, { HOME: "/home" });
+  on("config.list", () => ({ value: [{ key: "theme", value: theme }] }) as never);
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
@@ -214,6 +290,7 @@ async function lastRow($: Engine): Promise<Drawn> {
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: 10,
       bodyColumns: 100,
@@ -242,6 +319,44 @@ function chips(node: Drawn): Drawn[] {
 }
 
 async function selectedTabPaint($: Engine): Promise<{ background: unknown; text: unknown }> {
+  const label = await selectedTabLabel($);
+  return { background: label?.backgroundColor, text: label?.color };
+}
+
+function expectInverseTab(label: Record<string, unknown> | undefined): void {
+  expect({ fill: label?.backgroundColor, text: label?.color }).toEqual({
+    fill: CLAWD_BACKGROUND,
+    text: PROMPT_BORDER,
+  });
+  expect(isHeavy(label)).toBe(true);
+  expect(themeRgb(LIGHT_ANSI, label?.backgroundColor)).not.toEqual(themeRgb(LIGHT_ANSI, PANE_FILL));
+  expect(
+    contrastRatio(themeRgb(LIGHT_ANSI, label?.color), themeRgb(LIGHT_ANSI, label?.backgroundColor)),
+  ).toBeGreaterThanOrEqual(WCAG_AA_RATIO);
+}
+
+function contrastRatio(a: readonly number[], b: readonly number[]): number {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return ((light ?? 0) + LUMINANCE_OFFSET) / ((dark ?? 0) + LUMINANCE_OFFSET);
+}
+
+function luminance(rgb: readonly number[]): number {
+  const [r = 0, g = 0, b = 0] = rgb.map((channel) => {
+    const unit = channel / CHANNEL_MAX;
+    return unit <= SRGB_LINEAR_CUTOFF
+      ? unit / SRGB_LINEAR_DIVISOR
+      : ((unit + SRGB_OFFSET) / SRGB_SCALE) ** SRGB_GAMMA;
+  });
+  return LUMA_R * r + LUMA_G * g + LUMA_B * b;
+}
+
+function themeRgb(theme: string, key: unknown): readonly number[] {
+  const rgb = (THEMES as Record<string, Record<string, readonly number[]>>)[theme]?.[String(key)];
+  if (rgb === undefined) throw new Error(`no RGB for ${String(key)} in ${theme}`);
+  return rgb;
+}
+
+async function selectedTabLabel($: Engine): Promise<Record<string, unknown> | undefined> {
   const pane = await $.ui.mount({
     plugin: "paneline",
     surface: "terminal",
@@ -258,5 +373,5 @@ async function selectedTabPaint($: Engine): Promise<{ background: unknown; text:
     viewport: { columns: 60, rows: 40 },
   });
   const [label] = await pane.findAll({ type: "Text", text: "Activity" });
-  return { background: label?.props.backgroundColor, text: label?.props.color };
+  return label?.props;
 }

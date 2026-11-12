@@ -145,7 +145,7 @@ describe("cleaning text", () => {
   });
 
   test("A17 the escape character is removed", () => {
-    expect(cleanText("red\x1b[31m text")).toBe("red[31m text");
+    expect(cleanText("red\x1b[31m text")).toBe("red text");
   });
 
   test("A18 other control characters are removed", () => {
@@ -179,7 +179,7 @@ describe("parsing dirty text", () => {
   test("A25 a paragraph shows no escape character", () => {
     const blocks = parse("one \x1b[0m two\r\nthree");
 
-    expect(inlineTextOf(blocks[0]!)).toBe("one [0m two three");
+    expect(inlineTextOf(blocks[0]!)).toBe("one  two three");
   });
 
   test("A26 a 20,000 character line of code is shown as 10,000 characters", () => {
@@ -191,7 +191,7 @@ describe("parsing dirty text", () => {
   test("A27 a code line shows no escape character", () => {
     const text = [FENCE3, "\x1b[1mbold\x1b[0m", FENCE3].join("\n");
 
-    expect(codeBlockOf(text).lines).toEqual(["[1mbold[0m"]);
+    expect(codeBlockOf(text).lines).toEqual(["bold"]);
   });
 });
 
@@ -378,6 +378,38 @@ describe("block kinds", () => {
     expect(list.items.map((item) => plainOf(item.inline))).toEqual(["first second", "next"]);
   });
 
+  test("A61 a fence indented under an item belongs to that item", () => {
+    const text = ["- first", "  " + FENCE3 + "js", "  code", "  " + FENCE3, "- second"].join("\n");
+
+    const list = blockOf(text, "list");
+
+    expect(parse(text).map((block) => block.kind)).toEqual(["list"]);
+    expect(list.items.map((item) => item.blocks.map((block) => block.lines))).toEqual([
+      [["  code"]],
+      [],
+    ]);
+  });
+
+  test("A62 a fence after a blank line under an item stays in that item and the next item keeps its number", () => {
+    const text = ["1. first", "", "   " + FENCE3, "   code", "   " + FENCE3, "2. second"].join(
+      "\n",
+    );
+
+    const list = blockOf(text, "list");
+
+    expect(parse(text).map((block) => block.kind)).toEqual(["list"]);
+    expect(list.items.map((item) => [item.marker, item.blocks.length])).toEqual([
+      ["1.", 1],
+      ["2.", 0],
+    ]);
+  });
+
+  test("A63 an unindented line after a blank line still ends the list", () => {
+    const text = ["- first", "", "plain"].join("\n");
+
+    expect(parse(text).map((block) => block.kind)).toEqual(["list", "paragraph"]);
+  });
+
   test("A46 a dash line between two paragraphs is a rule block", () => {
     const kinds = parse("one\n\n---\n\ntwo").map((block) => block.kind);
 
@@ -485,5 +517,46 @@ describe("display width", () => {
     );
 
     expect(rows).toEqual([[{ text: "ab cd", style: "x" }], [{ text: "ef", style: "y" }]]);
+  });
+});
+
+describe("setext headings", () => {
+  test("A54 an equals line under a text line draws a level 1 heading", () => {
+    const heading = blockOf("Title\n=====", "heading");
+
+    expect(heading.level).toBe(1);
+    expect(plainOf(heading.inline)).toBe("Title");
+  });
+
+  test("A55 a dash line under a text line draws a level 2 heading", () => {
+    const heading = blockOf("Section\n---", "heading");
+
+    expect(heading.level).toBe(2);
+    expect(plainOf(heading.inline)).toBe("Section");
+  });
+
+  test("A56 every line of a paragraph above an underline is one heading", () => {
+    const blocks = parse("first\nsecond\n===");
+
+    expect(blocks.map((block) => block.kind)).toEqual(["heading"]);
+    expect(plainOf((blocks[0] as Extract<Block, { kind: "heading" }>).inline)).toBe("first second");
+  });
+
+  test("A57 a dash line with no text above it stays a thematic break", () => {
+    expect(parse("---\nafter").map((block) => block.kind)).toEqual(["rule", "paragraph"]);
+  });
+
+  test("A58 an equals line with no text above it stays a paragraph", () => {
+    expect(parse("===").map((block) => block.kind)).toEqual(["paragraph"]);
+  });
+
+  test("A59 a table row above an underline is not a heading", () => {
+    expect(parse("a | b\n===").map((block) => block.kind)).toEqual(["paragraph"]);
+    expect(parse("a | b\n---").map((block) => block.kind)).toEqual(["paragraph", "rule"]);
+  });
+
+  test("A60 a list item above an underline is not a heading", () => {
+    expect(parse("- item\n===").map((block) => block.kind)).toEqual(["list", "paragraph"]);
+    expect(parse("- item\n---").map((block) => block.kind)).toEqual(["list", "rule"]);
   });
 });

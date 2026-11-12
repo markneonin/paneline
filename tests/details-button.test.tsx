@@ -7,7 +7,7 @@ const COLUMNS = 100;
 const ROWS = 24;
 
 describe("details button", () => {
-  test("D1 pressing Details in a tool group opens the session pane", async ($, on) => {
+  test("D1 pressing Details in a tool group opens the session pane with the panel fill", async ($, on) => {
     const opened = worldOf(on);
     await $.session.start(SESSION_START);
     opened.length = 0;
@@ -18,7 +18,14 @@ describe("details button", () => {
 
     await group.press({ key: details?.key ?? "" });
 
-    expect(opened).toEqual([{ id: "session", title: "Session", closeOnEscape: true }]);
+    expect(opened).toEqual([
+      {
+        id: "session",
+        title: "Session",
+        closeOnEscape: true,
+        backgroundColor: "composerSidebarBackground",
+      },
+    ]);
   });
 });
 
@@ -50,14 +57,22 @@ function worldOf(on: On): unknown[] {
   mock.env(on, { HOME: "/home" });
   const opened: unknown[] = [];
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
+  on("session.messages", () => ({ value: [] }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
+  on("ui.panes", () => ({ value: [] }));
   on("ui.open", (_$, e) => {
-    opened.push({ id: e.id, title: e.title, closeOnEscape: e.closeOnEscape });
+    opened.push({
+      id: e.id,
+      title: e.title,
+      closeOnEscape: e.closeOnEscape,
+      backgroundColor: e.backgroundColor,
+    });
     return { value: { isPlaced: true } };
   });
   on("command.register", () => ({ value: {} }) as never);

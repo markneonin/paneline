@@ -3,16 +3,22 @@ import type { On, SessionContextBreakdown } from "claude-code";
 import type { Engine, Mounted } from "claude-code/testing";
 
 import { palette } from "../hooks/palette";
+import { screenRows } from "./band-screen";
+import { collect } from "./draw-tree";
+import type { Node as DrawNode } from "./draw-tree";
 import {
   bodyOf,
+  detailAfter,
   hollowRowOf,
   lines,
   pressAction,
   pressServer,
   rowOrFail,
   serverEntriesOf,
+  serverRowsOf,
   summaryOf,
 } from "./mcp-tree";
+import { pressPagedTab } from "./clear-world";
 import { isHeavy } from "./weight";
 
 type Pane = Mounted<"terminal", "Pane">;
@@ -28,6 +34,17 @@ type World = {
 const COLUMNS = 60;
 const PANE_ROWS = 40;
 const NOW = 200_000;
+const TAB_LABELS = [
+  "Activity",
+  "Files",
+  "Agents",
+  "Shells",
+  "Plan",
+  "Context",
+  "MCP",
+  "Skills",
+  "Spend",
+];
 const SETTLE_TICKS = 5;
 
 const LINEAR_AND_DOCS = [
@@ -54,7 +71,7 @@ describe("mcp tab", () => {
     expect(await colorsOf(pane, "Manage MCP servers")).toEqual([palette.userText]);
   });
 
-  test("M2 the counts column is aligned and a connected server shows a green check", async ($, on) => {
+  test("M2 every server row keeps its counts whole at the pane's right edge, and a connected server shows a green check", async ($, on) => {
     const world = worldOf(on);
     world.breakdown.mcpTools = [
       ...LINEAR_AND_DOCS,
@@ -68,14 +85,16 @@ describe("mcp tab", () => {
 
     const pane = await paneOnTab($, "MCP");
 
-    const columns = (await pane.findAll({ type: "Box" })).filter(
-      (box) => box.props.justifyContent === "flex-end",
-    );
-    expect(columns.map((box) => box.props.width)).toEqual([
-      "10 tools · 0 uses".length,
-      "10 tools · 0 uses".length,
-      "10 tools · 0 uses".length,
-    ]);
+    const rows = screenRows(await pane.drawn(), COLUMNS).map((row) => row.trimEnd());
+    expect(
+      ["linear", "docs", "big"].map((name) =>
+        /\d+ uses?$/u.test(rows.find((row) => row.includes(name)) ?? ""),
+      ),
+    ).toEqual([true, true, true]);
+    const shown = await lines(pane);
+    expect(
+      serverRowsOf(shown).map((row) => /\d+ uses?$/u.test(detailAfter(row.line, row.name))),
+    ).toEqual([true, true, true]);
     expect((await colorsOf(pane, "✔")).filter((color) => color !== undefined)).toEqual([
       palette.ok,
       palette.ok,
@@ -147,13 +166,11 @@ describe("mcp tab", () => {
 
     const pane = await paneOnTab($, "MCP");
 
-    const boxes = await pane.findAll({ type: "Box" });
-    const row = boxes.find((box) => String(box.props.key).endsWith("-name"));
-    const nameCells = boxes.filter((box) => box.props.minWidth === 0);
-    expect(row?.props.height).toBe(1);
-    expect(nameCells).toHaveLength(1);
-    expect(nameCells[0]?.props.flexShrink).toBe(1);
-    expect(boxes.find((box) => box.props.justifyContent === "flex-end")?.props.flexShrink).toBe(0);
+    const rows = screenRows(await pane.drawn(), COLUMNS).map((row) => row.trimEnd());
+    const serverRow = rows.find((row) => row.includes("a-very-long"));
+    expect(serverRow, "the long server on a row of its own").toBeDefined();
+    expect(serverRow).toMatch(/…/u);
+    expect(serverRow).toMatch(/1 tool.*10 tokens.*0 uses$/u);
   });
 
   test("M4d a plugin server shows and is sent under the name /mcp lists, a plain server stays as it is", async ($, on) => {
@@ -225,12 +242,17 @@ describe("mcp tab", () => {
       "clawd_background",
     ]);
     expect(filled.filter((text) => isHeavy(text.props))).toHaveLength(1);
-    const dim = (await pane.findAll({ type: "Button" })).filter(
-      (button) =>
-        button.props.dimColor === true &&
-        ["Activity", "Files"].includes(String(button.props.label)),
+    const tabs = collect((await pane.drawn()) as unknown as DrawNode, "Button").filter((button) =>
+      TAB_LABELS.includes(String(button.props?.label)),
     );
-    expect(dim).toHaveLength(2);
+    expect(tabs.map((button) => button.props?.label)).toEqual([
+      "Activity",
+      "Files",
+      "Agents",
+      "Plan",
+      "Context",
+    ]);
+    expect(tabs.every((button) => button.props?.dimColor === true)).toBe(true);
   });
 
   test("M8 a measure that changes no unit redraws the open MCP tab with the new tool count, with no press or redraw", async ($, on) => {
@@ -302,6 +324,7 @@ function worldOf(on: On): World {
   });
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("fs.read", (_$, e, next) => {
     if (world.configDisabled === undefined || !e.path.endsWith(".claude.json")) return next(e);
@@ -348,7 +371,7 @@ async function paneOnTab($: Engine, label: string): Promise<Pane> {
 }
 
 async function pressTab(pane: Pane, label: string): Promise<void> {
-  await pressNth(pane, label, 0);
+  await pressPagedTab(pane, label);
 }
 
 async function pressNth(pane: Pane, label: string, index: number): Promise<void> {

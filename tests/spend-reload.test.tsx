@@ -10,7 +10,7 @@ import {
   SONNET,
   agentOwner,
   blocks,
-  cacheSummaryOf,
+  missCaptionOf,
   centsOf,
   clearSession,
   lines,
@@ -91,7 +91,7 @@ describe("spend after a plugin reload", () => {
 
     const pane = await spendPane($);
     const cache = (await blocks(pane))[CACHE_TITLE];
-    expect(cacheSummaryOf(cache)).toEqual({ misses: "2 misses", lost: "~$0.75" });
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "2 misses", lost: "~$0.75" });
     expect(missesOf(cache).map((miss) => [miss.cause, miss.tokens])).toEqual([
       ["cache rebuilt", "78k"],
       ["cache rebuilt", "78k"],

@@ -12,14 +12,16 @@ const COLUMNS = 60;
 const PANE_ROWS = 40;
 const FLUSH_MS = 400;
 const TERMINAL_COLOUR = /^ansi256\(([0-9]|1[0-5])\)$/;
-const TERMINAL_HUES = [
+const AUTO_HUES = [
   "ansi256(1)",
   "ansi256(2)",
   "ansi256(3)",
   "ansi256(4)",
   "ansi256(5)",
   "ansi256(6)",
-];
+  "ansi256(12)",
+  "ansi256(13)",
+].sort();
 const OTHER_THEMES = [
   "dark",
   "light",
@@ -82,10 +84,10 @@ describe("under auto the pane marks take the terminal's palette on the engine fi
     expect(colours.filter((colour) => !TERMINAL_COLOUR.test(colour))).toEqual([]);
   });
 
-  test("TL2 the auto pane marks are the terminal's red, green, yellow, blue, magenta and cyan", () => {
+  test("TL2 the auto pane marks are the terminal's red, green, yellow, blue, magenta and cyan, then bright blue and bright magenta", () => {
     const ink = inkFor("auto");
 
-    expect([...ink.hues].sort()).toEqual(TERMINAL_HUES);
+    expect([...ink.hues].sort()).toEqual(AUTO_HUES);
     expect(ink.mix.Read).toBe("ansi256(4)");
     expect(ink.ok).toBe("ansi256(2)");
     expect(ink.failed).toBe("ansi256(1)");
@@ -152,6 +154,7 @@ function paneWorld(on: On, theme: string): void {
   );
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);

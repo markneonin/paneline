@@ -1,5 +1,5 @@
 import { describe, expect, test } from "claude-code/testing";
-import type { On } from "claude-code";
+import type { On, Shaped } from "claude-code";
 import type { Engine } from "claude-code/testing";
 
 import type { AgentEdit, CallRecord } from "../types";
@@ -19,8 +19,8 @@ type Batched = World & { writes: Write[] };
 
 const BATCH_MS = 1_000;
 const AGENT = "agent-1";
-const KEPT_CALLS = 50;
-const MANY = 60;
+const KEPT_CALLS = 400;
+const MANY = 401;
 
 describe("agent calls and edits are written once per second", () => {
   test("B1 three agent calls within a second are written once, all three together", async ($, on) => {
@@ -82,6 +82,7 @@ describe("agent calls and edits are written once per second", () => {
     const pane = await paneOnTab($, "Files");
 
     await editFile($, world, "/work/a.ts", 3, 1, agent);
+    await editFile($, world, "/work/own.ts", 1, 0);
     await world.clock.advance(BATCH_MS);
     await settle(pane);
 
@@ -90,7 +91,7 @@ describe("agent calls and edits are written once per second", () => {
     expect(shown).toContain("alpha 1 file +3 -1");
   });
 
-  test("B7 sixty agent calls within a second are written once and keep the last fifty", async ($, on) => {
+  test("B7 four hundred one agent calls within a second are written once and keep the last four hundred", async ($, on) => {
     const world = batchedWorldOf(on);
 
     for (let i = 0; i < MANY; i++) await agentCall($, "Read", `r${i}`);
@@ -138,7 +139,7 @@ function callOf($: Engine, call: object): Promise<unknown> {
 }
 
 function callWrites(world: Batched): CallRecord[][] {
-  return writtenUnder(world, "calls") as CallRecord[][];
+  return writtenUnder(world, "calls").map((saved) => (saved as Shaped<CallRecord[]>).value);
 }
 
 function editWrites(world: Batched): AgentEdit[][] {

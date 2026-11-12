@@ -4,12 +4,29 @@ import type { Engine } from "claude-code/testing";
 
 import { inkFor } from "../hooks/pane-ink";
 import { palette } from "../hooks/palette";
-import { childrenOf, collect, textOf } from "./draw-tree";
+import { colouredPieces } from "./band-screen";
+import { childrenOf, collect, labelledTextOf, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
+import {
+  ANSI_FILLS,
+  contrastRatio,
+  deltaE2000,
+  luminance,
+  rgbOfColour,
+  xtermRgbOfColour,
+} from "./contrast";
+import type { Rgb, ThemeName } from "./contrast";
 import { THEMES } from "./theme-rgb";
 
-type ThemeName = keyof typeof THEMES;
-type Rgb = readonly number[];
+const DISTINCT_HUE_DELTA_E = 22;
+const DISTINCT_FLOOR: Record<string, number> = {
+  light: DISTINCT_HUE_DELTA_E,
+  "light-daltonized": DISTINCT_HUE_DELTA_E,
+  "light-ansi": DISTINCT_HUE_DELTA_E,
+  "dark-ansi": 15,
+};
+const AUTO_DISTINCT_FLOOR = 11.4;
+const INK_DELTA_E = 10;
 
 const HOME = "/Users/dev";
 const CWD = "/Users/dev/app";
@@ -18,23 +35,22 @@ const PANE_ROWS = 40;
 const FLUSH_MS = 400;
 const MARK_RATIO = 3;
 const TEXT_RATIO = 4.5;
-const CUBE_START = 16;
-const CUBE_SIDE = 6;
-const CUBE_LEVELS = [0, 95, 135, 175, 215, 255];
-const ANSI_FILLS: Record<string, readonly Rgb[]> = {
-  "light-ansi": [
-    [191, 191, 191],
-    [229, 229, 229],
-  ],
-  "dark-ansi": [
-    [102, 102, 102],
-    [127, 127, 127],
-  ],
-};
+const DARK_ANSI_MUTED_RATIO = 2;
+const NAME_OVER_MUTED_RATIO = 1.5;
+const GREY_251 = [198, 198, 198];
 const THEME_NAMES = Object.keys(THEMES) as ThemeName[];
-const ANSI256 = /^ansi256\((\d+)\)$/;
 
 let clock: ReturnType<typeof mock.clock>;
+
+const MIX_THEMES = [
+  "dark",
+  "light",
+  "dark-daltonized",
+  "light-daltonized",
+  "dark-ansi",
+  "light-ansi",
+  "auto",
+];
 
 describe("pane marks stay readable on the pane fill in every theme", () => {
   for (const theme of THEME_NAMES) {
@@ -63,7 +79,12 @@ describe("pane marks stay readable on the pane fill in every theme", () => {
       expect(weak).toEqual([]);
     });
 
-    const textRatio = theme.endsWith("ansi") ? MARK_RATIO : TEXT_RATIO;
+    const textRatio =
+      theme === "dark-ansi"
+        ? DARK_ANSI_MUTED_RATIO
+        : theme.endsWith("ansi")
+          ? MARK_RATIO
+          : TEXT_RATIO;
 
     test(`PT2 ${theme}: muted text is at least ${textRatio}:1 on the pane fill`, () => {
       const ratio = Math.min(
@@ -87,6 +108,67 @@ describe("pane marks stay readable on the pane fill in every theme", () => {
       ]);
     }
   });
+
+  test("PT8 dark-ansi: muted text is dimmer than names", () => {
+    const ink = inkFor("dark-ansi");
+
+    expect(luminance(rgbOfColour("dark-ansi", ink.muted))).toBeLessThan(
+      luminance(rgbOfColour("dark-ansi", ink.text ?? "")),
+    );
+  });
+
+  test("PT8b dark-ansi: names are clearly brighter than muted text, not just a hair", () => {
+    const ink = inkFor("dark-ansi");
+
+    expect(
+      contrastRatio(rgbOfColour("dark-ansi", ink.text ?? ""), rgbOfColour("dark-ansi", ink.muted)),
+    ).toBeGreaterThanOrEqual(NAME_OVER_MUTED_RATIO);
+  });
+
+  test("PT8c dark-ansi: muted text is its own grey, so it differs from names in palettes where white and grey match", () => {
+    const ink = inkFor("dark-ansi");
+
+    expect([palette.text, palette.muted]).not.toContain(ink.muted);
+  });
+
+  test("PT8d a 256-colour grey from the ramp reads as that grey", () => {
+    expect(rgbOfColour("dark-ansi", "ansi256(251)")).toEqual(GREY_251);
+  });
+
+  test("PT10 the muted colour is unchanged in dark, light, light-ansi, light-daltonized, dark-daltonized and auto", () => {
+    expect({
+      dark: inkFor("dark").muted,
+      light: inkFor("light").muted,
+      "light-ansi": inkFor("light-ansi").muted,
+      "light-daltonized": inkFor("light-daltonized").muted,
+      "dark-daltonized": inkFor("dark-daltonized").muted,
+      auto: inkFor("auto").muted,
+    }).toEqual({
+      dark: palette.muted,
+      light: palette.muted,
+      "light-ansi": palette.text,
+      "light-daltonized": palette.muted,
+      "dark-daltonized": palette.muted,
+      auto: "ansi256(8)",
+    });
+  });
+
+  for (const theme of ["light", "light-daltonized"] as const) {
+    test(`PT13 ${theme}: the empty bar cells are at least ${MARK_RATIO}:1 on the pane fill and lighter than muted text`, () => {
+      const ink = inkFor(theme);
+      const fill = rgbOf(theme, palette.panel);
+      const empty = rgbOfColour(theme, ink.meterEmpty);
+
+      expect(contrastRatio(empty, fill)).toBeGreaterThanOrEqual(MARK_RATIO);
+      expect(luminance(empty)).toBeGreaterThan(luminance(rgbOfColour(theme, ink.muted)));
+    });
+  }
+
+  for (const theme of MIX_THEMES) {
+    test(`PT11 under ${theme} no two tool kinds in the Tool mix share a colour`, () => {
+      expect(duplicatesOf(Object.values(inkFor(theme).mix))).toEqual([]);
+    });
+  }
 });
 
 describe("the drawn tabs use the theme's pane colours", () => {
@@ -115,14 +197,18 @@ describe("the drawn tabs use the theme's pane colours", () => {
   });
 
   for (const theme of ["light-ansi", "dark-ansi", "light", "dark"]) {
-    test(`PT6 under ${theme} the tab bar and file folders stay dimmed buttons and only the file name is an undimmed name label`, async ($, on) => {
+    test(`PT6 under ${theme} the tab bar stays dimmed buttons and only the filter label, the folder name and the file name are undimmed labels`, async ($, on) => {
       paneWorld(on, theme);
       await $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
 
       const tree = await paneOnTab($, "Files");
 
       const undimmed = collect(tree, "Button").filter((button) => button.props?.dimColor !== true);
-      expect(undimmed.map((button) => button.props?.label)).toEqual(["a.ts"]);
+      expect(undimmed.map((button) => button.props?.label)).toEqual([
+        "f filter",
+        "▾ ~/app/src/",
+        "a.ts",
+      ]);
     });
   }
 
@@ -140,35 +226,149 @@ describe("the drawn tabs use the theme's pane colours", () => {
       expect(glyphs.filter((node) => !allowed.has(node.props?.color))).toEqual([]);
     });
   }
+
+  for (const theme of ["light-ansi", "dark-ansi", "light", "dark"]) {
+    test(`PT12 under ${theme} the Context links to the MCP and Skills tabs are drawn as bracketed buttons`, async ($, on) => {
+      paneWorld(on, theme, BREAKDOWN_WITH_LINKS);
+      await $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
+
+      const tree = await paneOnTab($, "Context");
+
+      const links = collect(tree, "Button").filter(
+        (button) => button.props?.label === "MCP tab" || button.props?.label === "Skills tab",
+      );
+      expect(links.map((button) => button.props?.label)).toEqual(["MCP tab", "Skills tab"]);
+      expect(collect(tree, "Box").map(labelledTextOf)).toEqual(
+        expect.arrayContaining(["[ MCP tab ]", "[ Skills tab ]"]),
+      );
+    });
+  }
+
+  for (const theme of ["light", "light-daltonized", "light-ansi", "dark-ansi", "auto"]) {
+    test(`PT14 under ${theme} the Context legend gives each of the eight used categories its own swatch colour`, async ($, on) => {
+      paneWorld(on, theme, BREAKDOWN_EIGHT);
+      await $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
+
+      const pieces = colouredPieces(await paneOnTab($, "Context")).filter(
+        (piece) => piece.text.trim() !== "",
+      );
+
+      const swatches = USED_CATEGORIES.map((name) => {
+        const at = pieces.findIndex((piece) => piece.text.trim() === name);
+        expect(at, `a legend row for ${name}`).toBeGreaterThan(0);
+        return pieces[at - 1]?.color;
+      });
+      expect(new Set(swatches).size).toBe(USED_CATEGORIES.length);
+    });
+  }
+
+  for (const theme of ["light", "light-daltonized", "light-ansi", "dark-ansi"]) {
+    test(`PT15 under ${theme} every two Context legend swatches of the eight used categories are at least ${DISTINCT_FLOOR[theme]} CIEDE2000 apart`, async ($, on) => {
+      paneWorld(on, theme, BREAKDOWN_EIGHT);
+      await $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
+
+      const pieces = colouredPieces(await paneOnTab($, "Context")).filter(
+        (piece) => piece.text.trim() !== "",
+      );
+
+      const swatches = USED_CATEGORIES.map((name) => {
+        const at = pieces.findIndex((piece) => piece.text.trim() === name);
+        expect(at, `a legend row for ${name}`).toBeGreaterThan(0);
+        return { name, rgb: swatchRgbOf(theme as ThemeName, String(pieces[at - 1]?.color)) };
+      });
+      const closePairs = swatches.flatMap((first, i) =>
+        swatches
+          .slice(i + 1)
+          .filter((second) => deltaE2000(first.rgb, second.rgb) < (DISTINCT_FLOOR[theme] ?? 0))
+          .map((second) => `${first.name}/${second.name}`),
+      );
+      expect(closePairs).toEqual([]);
+    });
+  }
+
+  test("PT16 under auto every two pane hues are at least the measured floor apart in the terminal's default palette", () => {
+    const hues = inkFor("auto").hues.map(xtermRgbOfColour);
+
+    const closePairs = hues.flatMap((first, i) =>
+      hues
+        .slice(i + 1)
+        .filter((second) => deltaE2000(first, second) < AUTO_DISTINCT_FLOOR)
+        .map((second) => `${first.join(",")}/${second.join(",")}`),
+    );
+    expect(closePairs).toEqual([]);
+  });
+
+  test(`PT17 dark-ansi: every pane hue is at least ${INK_DELTA_E} CIEDE2000 from the name, muted and failed colours`, () => {
+    const ink = inkFor("dark-ansi");
+    const inks = [ink.text, ink.muted, ink.failed].map((colour) =>
+      rgbOfColour("dark-ansi", colour ?? ""),
+    );
+
+    const lost = ink.hues.filter((hue) =>
+      inks.some((other) => deltaE2000(rgbOfColour("dark-ansi", hue), other) < INK_DELTA_E),
+    );
+    expect(lost).toEqual([]);
+  });
+
+  test("PT18 light-ansi: the alert colour is the amber brown 94", () => {
+    expect(inkFor("light-ansi").alert).toBe("ansi256(94)");
+  });
+
+  test("PT19 dark and dark-daltonized keep their pane hue tables", () => {
+    for (const theme of ["dark", "dark-daltonized"]) {
+      expect(inkFor(theme).hues).toEqual([
+        palette.tool,
+        palette.ok,
+        palette.alert,
+        palette.keyword,
+        palette.button,
+        palette.user,
+      ]);
+    }
+  });
+
+  test("PT9 dark-ansi: an Activity row's duration is dimmer than the file name beside it", async ($, on) => {
+    paneWorld(on, "dark-ansi");
+    await $.session.start({ cwd: CWD, surface: "terminal", isInteractive: true });
+
+    const cells = textsOfRowWith(await paneOnTab($, "Activity"), "a.ts");
+    const duration = cells.find(isDuration);
+    const name = cells.find((node) => textOf(node).includes("a.ts"));
+
+    expect(duration).toBeDefined();
+    expect(name).toBeDefined();
+    expect(brightnessInDarkAnsi(duration)).toBeLessThan(brightnessInDarkAnsi(name));
+  });
 });
+
+function duplicatesOf(values: string[]): string[] {
+  return values.filter((value, i) => values.indexOf(value) !== i);
+}
+
+function textsOfRowWith(tree: Node, text: string): Node[] {
+  const row = collect(tree, "Box").find(
+    (box) =>
+      box.props?.flexDirection === "row" &&
+      box.props.height === 1 &&
+      collect(box, "Text").some((node) => textOf(node).includes(text)),
+  );
+  return row === undefined ? [] : collect(row, "Text");
+}
+
+function isDuration(node: Node): boolean {
+  return /^\d+(ms|s)$/.test(textOf(node));
+}
+
+function brightnessInDarkAnsi(node: Node | undefined): number {
+  return luminance(rgbOfColour("dark-ansi", String(node?.props?.color)));
+}
 
 function ownText(node: Node): string {
   return childrenOf(node).length === 0 ? textOf(node) : "";
 }
 
-function rgbOfColour(theme: ThemeName, colour: string): Rgb {
-  const cube = ANSI256.exec(colour);
-  if (cube === null) return (THEMES[theme] as Record<string, Rgb>)[colour] ?? [0, 0, 0];
-  const index = Number(cube[1]) - CUBE_START;
-  const level = (step: number): number => CUBE_LEVELS[Math.floor(index / step) % CUBE_SIDE] ?? 0;
-  return [level(CUBE_SIDE ** 2), level(CUBE_SIDE), level(1)];
-}
-
 function rgbOf(theme: ThemeName, key: string): Rgb {
   return (THEMES[theme] as Record<string, Rgb>)[key] ?? [0, 0, 0];
-}
-
-function contrastRatio(a: Rgb, b: Rgb): number {
-  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return ((light ?? 0) + 0.05) / ((dark ?? 0) + 0.05);
-}
-
-function luminance(rgb: Rgb): number {
-  const [r = 0, g = 0, b = 0] = rgb.map((channel) => {
-    const unit = channel / 255;
-    return unit <= 0.03928 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 const BREAKDOWN = {
@@ -202,7 +402,47 @@ const BREAKDOWN = {
   isAutoCompactEnabled: true,
 };
 
-function paneWorld(on: On, theme: string): void {
+const USED_CATEGORIES = [
+  "System prompt",
+  "System tools",
+  "MCP tools",
+  "MCP server instructions",
+  "Custom agents",
+  "Memory files",
+  "Skills",
+  "Messages",
+];
+
+const BREAKDOWN_EIGHT = {
+  ...BREAKDOWN,
+  categories: [
+    ...USED_CATEGORIES.map((name, i) => ({
+      name,
+      tokens: 80_000 - i * 5_000,
+      color: "permission",
+      isDeferred: false,
+      kind: "used",
+    })),
+    { name: "Free space", tokens: 20_000, color: "promptBorder", isDeferred: false, kind: "free" },
+  ],
+  totalTokens: 180_000,
+  gridRows: USED_CATEGORIES.map((name) => [{ categoryName: name, squareFullness: 1 }]),
+};
+
+const BREAKDOWN_WITH_LINKS = {
+  ...BREAKDOWN,
+  mcpTools: [{ name: "mcp__linear__a", serverName: "linear", tokens: 0, isLoaded: false }],
+  skills: { totalSkills: 2, includedSkills: 2, tokens: 300, skillFrontmatter: [] },
+};
+
+function swatchRgbOf(theme: ThemeName, colour: string): Rgb {
+  const index = /^ansi256\((\d+)\)$/.exec(colour)?.[1];
+  const isKnown = index === undefined ? colour in THEMES[theme] : Number(index) >= 16;
+  expect(isKnown, `swatch colour ${colour} resolves to RGB under ${theme}`).toBe(true);
+  return rgbOfColour(theme, colour);
+}
+
+function paneWorld(on: On, theme: string, breakdown: object = BREAKDOWN): void {
   clock = mock.clock(on, { now: 200_000 });
   mock.env(on, { HOME });
   on("config.list", () => ({ value: [{ key: "theme", value: theme }] }) as never);
@@ -217,13 +457,14 @@ function paneWorld(on: On, theme: string): void {
       ({
         value: {
           startedAt: 0,
-          context: { window: 200_000, breakdown: BREAKDOWN },
+          context: { window: 200_000, breakdown },
           rateLimits: [],
         },
       }) as never,
   );
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);

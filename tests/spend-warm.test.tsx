@@ -25,19 +25,20 @@ const COST = 1;
 const HOUR_MS = 60 * MS_PER_MINUTE;
 const FIVE_MINUTES_MS = 5 * MS_PER_MINUTE;
 const ONE_MINUTE_MS = MS_PER_MINUTE;
-const WARM_ROW = /^cache warm until (\d{2}:\d{2})$/;
-const COLD_ROW = "cache cold";
-const CACHE_ROW = /^cache (?:warm until \d{2}:\d{2}|cold)$/;
+const NO_MISSES = " · 0 misses · $0.00 lost";
+const WARM_ROW = /^cache warm until (\d{2}:\d{2}) · 0 misses · \$0\.00 lost$/;
+const COLD_ROW = `cache cold${NO_MISSES}`;
+const CACHE_ROW = /^cache (?:warm until \d{2}:\d{2}|cold)/;
 const SMALL_TURN = { write: 20_000 };
 
 describe("spend cache label and warm-until row", () => {
-  test("W1 the hit tile says it counts all agents: its label reads 'from cache · all agents'", async ($, on) => {
+  test("W1 the hit tile says it counts all agents: its label reads 'cache, all agents'", async ($, on) => {
     const world = worldOf(on, SUBSCRIPTION);
     await sessionWithMainTurn($, world);
 
     const totals = totalsOf(await lines(await spendPane($)));
 
-    expect(totals?.labels.text).toBe(`this session ${HIT_LABEL} tool results`);
+    expect(totals?.labels.text).toBe(`this session ${HIT_LABEL} result tokens`);
   });
 
   test("W2 one minute before the 1 hour cache lifetime ends the totals show 'cache warm until' the turn end plus one hour, in muted 24-hour local time", async ($, on) => {
@@ -47,7 +48,7 @@ describe("spend cache label and warm-until row", () => {
 
     const row = await cacheRowOf(await spendPane($));
 
-    expect(row?.text).toBe(`cache warm until ${clockText(endedAt + HOUR_MS)}`);
+    expect(row?.text).toBe(`cache warm until ${clockText(endedAt + HOUR_MS)}${NO_MISSES}`);
     expect(isAllMuted(row)).toBe(true);
   });
 
@@ -73,7 +74,7 @@ describe("spend cache label and warm-until row", () => {
     await settle(pane);
     const cold = (await cacheRowOf(pane))?.text;
 
-    expect(warm).toBe(`cache warm until ${clockText(endedAt + FIVE_MINUTES_MS)}`);
+    expect(warm).toBe(`cache warm until ${clockText(endedAt + FIVE_MINUTES_MS)}${NO_MISSES}`);
     expect(cold).toBe(COLD_ROW);
   });
 

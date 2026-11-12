@@ -3,6 +3,8 @@ import type { On, ToolCallResult } from "claude-code";
 import type { Engine, MockClock, Mounted } from "claude-code/testing";
 
 import { palette } from "../hooks/palette";
+import { paneInk } from "../hooks/pane-ink";
+import { screenRows } from "./band-screen";
 
 type Pane = Mounted<"terminal", "Pane">;
 type Node = { type: string; props?: Record<string, unknown>; children?: unknown[] };
@@ -11,12 +13,16 @@ type World = { clock: MockClock; created: number; calls: number };
 
 const COLUMNS = 60;
 const WIDE_COLUMNS = 80;
+const PLAN_WIDE_COLUMNS = 120;
+const BAR_THRESHOLD_PANE_COLUMNS = 101;
+const SEVEN_TASKS = Array.from({ length: 7 }, (_, index) => `task ${index + 1}`);
 const PANE_ROWS = 40;
 const NOW = 1_000_000;
 const FLUSH_MS = 1_000;
 const WORK = "/work";
 const FOLDED_ONE = "▸ ✓ 1 done";
 const PLAN_HEADING = /^Plan\b.*\d+\/\d+$/u;
+const NO_TASKS_TEXT = "no task list yet · Claude's steps show here";
 const UNFOLDED_ONE = "▾ ✓ 1 done";
 const TODOS = [
   { content: "write the parser", status: "completed", activeForm: "writing" },
@@ -38,13 +44,32 @@ describe("plan tab", () => {
     ]);
   });
 
-  test("L2 with no tasks the tab says no plan yet in a muted line", async ($, on) => {
+  test("S8 with no tasks the Plan tab shows one dim line saying no task list yet and what fills it", async ($, on) => {
     await begin($, on);
 
     const pane = await planTab($);
 
-    expect(await rowTexts(pane)).toContain("no plan yet");
-    expect(await colorsOf(pane, "no plan yet")).toEqual([palette.muted]);
+    expect((await rowTexts(pane)).filter((text) => text === NO_TASKS_TEXT)).toHaveLength(1);
+    expect(await colorsOf(pane, NO_TASKS_TEXT)).toEqual([palette.muted]);
+  });
+
+  test("S9 with no tasks at 60 columns the empty hint is drawn whole on the screen", async ($, on) => {
+    await begin($, on);
+
+    const pane = await planTab($);
+
+    expect(await shownRows(pane)).toContain(NO_TASKS_TEXT);
+  });
+
+  test("F16 with no tasks at 60 columns the Plan heading with its rule stands right above the empty hint", async ($, on) => {
+    await begin($, on);
+
+    const pane = await planTab($);
+
+    const rows = await shownRows(pane);
+    const hintAt = rows.indexOf(NO_TASKS_TEXT);
+    expect(hintAt).toBeGreaterThan(0);
+    expect(rows[hintAt - 1]).toMatch(/^Plan ─+$/);
   });
 
   test("L3 the heading says Plan with done over total at its right", async ($, on) => {
@@ -53,24 +78,22 @@ describe("plan tab", () => {
     await setStatus($, world, "1", "completed");
     const pane = await planTab($);
 
-    const heading = (await rowTexts(pane)).find((row) => row.startsWith("Plan"));
+    const heading = (await rowTexts(pane)).find((row) => PLAN_HEADING.test(row));
 
     expect(heading).toMatch(/^Plan\b.*\b1\/4$/u);
   });
 
-  test("L4 the active task shows with a filled arrow and the open ones with a circle, in text colour", async ($, on) => {
+  test("L4 the active task shows with a filled dot and the open ones with a circle", async ($, on) => {
     const world = await begin($, on);
     await createTasks($, world, ["write the parser", "wire the tab", "check the look"]);
     await setStatus($, world, "2", "in_progress");
     const pane = await planTab($);
 
-    const rows = await rowTexts(pane);
+    const rows = await shownRows(pane);
 
-    expect(rows).toContain("▸ wire the tab");
+    expect(rows).toContain("● wire the tab");
     expect(rows).toContain("○ write the parser");
     expect(rows).toContain("○ check the look");
-    expect(await colorsOf(pane, "▸ wire the tab")).toEqual([palette.text]);
-    expect(await colorsOf(pane, "○ check the look")).toEqual([palette.text]);
   });
 
   test("L5 finished tasks are folded into one done row and their titles are hidden", async ($, on) => {
@@ -117,18 +140,18 @@ describe("plan tab", () => {
     const world = await begin($, on);
     await createTasks($, world, ["write the parser", "wire the tab"]);
     const pane = await planTab($);
-    const opened = await rowTexts(pane);
+    const opened = await shownRows(pane);
 
     await setStatus($, world, "1", "in_progress");
     await pane.redraw();
-    const active = await rowTexts(pane);
+    const active = await shownRows(pane);
     await setStatus($, world, "1", "completed");
     await pane.redraw();
 
     expect(opened).toContain("○ write the parser");
-    expect(active).toContain("▸ write the parser");
+    expect(active).toContain("● write the parser");
     expect(await buttonLabels(pane)).toContain(FOLDED_ONE);
-    expect((await rowTexts(pane)).find((row) => row.startsWith("Plan"))).toMatch(/\b1\/2$/u);
+    expect((await rowTexts(pane)).find((row) => PLAN_HEADING.test(row))).toMatch(/\b1\/2$/u);
   });
 
   test("L9 a todo list shows its texts as the task titles", async ($, on) => {
@@ -137,11 +160,11 @@ describe("plan tab", () => {
 
     const pane = await planTab($);
 
-    const rows = await rowTexts(pane);
-    expect(rows).toContain("▸ wire the tab");
+    const rows = await shownRows(pane);
+    expect(rows).toContain("● wire the tab");
     expect(rows).toContain("○ check the look");
     expect(await buttonLabels(pane)).toContain(FOLDED_ONE);
-    expect(rows.find((row) => row.startsWith("Plan"))).toMatch(/\b1\/3$/u);
+    expect(rows.find((row) => PLAN_HEADING.test(row))).toMatch(/\b1\/3$/u);
   });
 
   test("L10 when every task is done only the folded done row is left, with the full count", async ($, on) => {
@@ -155,7 +178,7 @@ describe("plan tab", () => {
     const rows = await rowTexts(pane);
     expect(await buttonLabels(pane)).toContain("▸ ✓ 2 done");
     expect(rows.filter((row) => /^[▸○] (one|two)$/u.test(row))).toEqual([]);
-    expect(rows.find((row) => row.startsWith("Plan"))).toMatch(/\b2\/2$/u);
+    expect(rows.find((row) => PLAN_HEADING.test(row))).toMatch(/\b2\/2$/u);
   });
 
   test("L11 a deleted task leaves the tab and the total drops", async ($, on) => {
@@ -169,7 +192,7 @@ describe("plan tab", () => {
     const rows = await rowTexts(pane);
     expect(rows).not.toContain("○ one");
     expect(rows).toContain("○ two");
-    expect(rows.find((row) => row.startsWith("Plan"))).toMatch(/\b0\/1$/u);
+    expect(rows.find((row) => PLAN_HEADING.test(row))).toMatch(/\b0\/1$/u);
   });
 
   test("L12 an opened done row stays open after a redraw and after leaving the tab and coming back", async ($, on) => {
@@ -232,7 +255,7 @@ describe("plan tab", () => {
 
     expect(linesAfterHeading(await planLines(pane))).toEqual([
       "",
-      "▸ two",
+      "● two",
       "○ three",
       "",
       "▸ ✓ 1 done",
@@ -240,10 +263,135 @@ describe("plan tab", () => {
   });
 });
 
+describe("plan tab progress bar and marks", () => {
+  test("A1 with 3 of 7 done at 120 columns the heading shows a 16-cell bar of 7 filled and 9 empty cells, then 3/7 at the right edge", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, SEVEN_TASKS);
+    await completeFirst($, world, 3);
+    const pane = await planTabAt($, PLAN_WIDE_COLUMNS);
+
+    const heading =
+      screenRows(await pane.drawn(), PLAN_WIDE_COLUMNS).find((row) =>
+        PLAN_HEADING.test(row.trimStart()),
+      ) ?? "";
+
+    expect(heading.trimStart()).toMatch(/^Plan ─+ ▰{7}▱{9} 3\/7$/u);
+    expect(heading.trimEnd().length).toBe(PLAN_WIDE_COLUMNS);
+  });
+
+  test("A2 the filled bar cells are in the ok colour and 3/7 is bold in the text colour", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, SEVEN_TASKS);
+    await completeFirst($, world, 3);
+    const pane = await planTabAt($, PLAN_WIDE_COLUMNS);
+
+    const leaves = await textLeaves(pane);
+
+    expect(textPiece(leaves, "▰".repeat(7))?.props?.color).toBe(paneInk().ok);
+    expect(textPiece(leaves, "3/7")?.props?.weight).toBe("semibold");
+    expect(textPiece(leaves, "3/7")?.props?.color).toBe(paneInk().text);
+  });
+
+  test("A3 at 60 columns the bar is 8 cells, 3 filled and 5 empty, before 3/7", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, SEVEN_TASKS);
+    await completeFirst($, world, 3);
+
+    const pane = await planTab($);
+
+    const heading = (await shownRows(pane)).find((row) => PLAN_HEADING.test(row)) ?? "";
+    expect(heading).toMatch(/^Plan ─+ ▰{3}▱{5} 3\/7$/u);
+  });
+
+  test("A4 in a 101-column pane, so the Plan tab is 100 wide, the bar is 16 cells", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, SEVEN_TASKS);
+    await completeFirst($, world, 3);
+
+    const pane = await planTabAt($, BAR_THRESHOLD_PANE_COLUMNS);
+
+    const heading =
+      (await shownRows(pane, BAR_THRESHOLD_PANE_COLUMNS)).find((row) => PLAN_HEADING.test(row)) ??
+      "";
+    expect(heading).toMatch(/^Plan ─+ ▰{7}▱{9} 3\/7$/u);
+  });
+
+  test("A5 with all 7 done the bar is 16 filled cells with no empty cell, and the count reads 7/7", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, SEVEN_TASKS);
+    await completeFirst($, world, 7);
+
+    const pane = await planTabAt($, PLAN_WIDE_COLUMNS);
+
+    const heading =
+      (await shownRows(pane, PLAN_WIDE_COLUMNS)).find((row) => PLAN_HEADING.test(row)) ?? "";
+    expect(heading).toMatch(/^Plan ─+ ▰{16} 7\/7$/u);
+  });
+
+  test("A6 the in-progress task shows a filled dot in the running colour and its title in bold text", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, ["write the parser", "wire the tab"]);
+    await setStatus($, world, "2", "in_progress");
+    const pane = await planTab($);
+
+    const leaves = await textLeaves(pane);
+
+    expect(await shownRows(pane)).toContain("● wire the tab");
+    expect(textPiece(leaves, "●")?.props?.color).toBe(paneInk().tool);
+    expect(textPiece(leaves, "wire the tab")?.props?.weight).toBe("semibold");
+    expect(textPiece(leaves, "wire the tab")?.props?.color).toBe(paneInk().text);
+  });
+
+  test("A7 a pending task shows a hollow circle in muted colour and its title in plain text colour", async ($, on) => {
+    const world = await begin($, on);
+    await createTasks($, world, ["write the parser"]);
+    const pane = await planTab($);
+
+    const leaves = await textLeaves(pane);
+
+    expect(await shownRows(pane)).toContain("○ write the parser");
+    expect(textPiece(leaves, "○")?.props?.color).toBe(paneInk().muted);
+    expect(textPiece(leaves, "write the parser")?.props?.color).toBe(paneInk().text);
+    expect(textPiece(leaves, "write the parser")?.props?.weight).toBeUndefined();
+  });
+});
+
 async function planTab($: Engine): Promise<Pane> {
-  const pane = await mountPane($, COLUMNS);
+  return planTabAt($, COLUMNS);
+}
+
+async function planTabAt($: Engine, columns: number): Promise<Pane> {
+  const pane = await mountPane($, columns);
   await press(pane, "Plan");
   return pane;
+}
+
+async function completeFirst($: Engine, world: World, count: number): Promise<void> {
+  for (const taskId of Array.from({ length: count }, (_, index) => String(index + 1))) {
+    await setStatus($, world, taskId, "completed");
+  }
+}
+
+async function shownRows(pane: Pane, columns = COLUMNS): Promise<string[]> {
+  return (await screenLines(pane, columns)).filter((line) => line !== "");
+}
+
+async function screenLines(pane: Pane, columns = COLUMNS): Promise<string[]> {
+  return screenRows(await pane.drawn(), columns).map((line) => line.trim());
+}
+
+async function textLeaves(pane: Pane): Promise<Node[]> {
+  const texts = allTexts(await pane.drawn());
+  return texts.filter((text) => allTexts(text).length === 1);
+}
+
+function allTexts(node: Node): Node[] {
+  const inner = elementsIn(node).flatMap(allTexts);
+  return node.type === "Text" ? [node, ...inner] : inner;
+}
+
+function textPiece(leaves: Node[], text: string): Node | undefined {
+  return leaves.find((leaf) => textOf(leaf) === text);
 }
 
 async function createTasks($: Engine, world: World, subjects: string[]): Promise<void> {
@@ -311,6 +459,7 @@ function worldOf(on: On): World {
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: WORK }));
   on("agent.list", () => ({ value: [] }));
   on("fs.exists", () => ({ value: true }));
@@ -375,7 +524,18 @@ async function press(pane: Pane, label: string): Promise<void> {
 }
 
 async function tabLabels(pane: Pane): Promise<string[]> {
-  const known = ["Activity", "Files", "Agents", "Plan", "Context", "MCP", "Skills", "Spend"];
+  const known = [
+    "Activity",
+    "Files",
+    "Agents",
+    "Plan",
+    "Context",
+    "MCP",
+    "Skills",
+    "Spend",
+    "Review",
+    "Sessions",
+  ];
   const labels = (await pane.findAll({ type: "Button" })).map((button) =>
     String(button.props.label),
   );

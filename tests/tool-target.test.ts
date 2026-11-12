@@ -31,4 +31,8 @@ describe("the label of a call row", () => {
   test("TG6 a call whose command has several lines is labelled by its first line", () => {
     expect(targetOf({ command: "echo a\nsecond line" })).toBe("echo a");
   });
+
+  test("TG7 a Skill call is labelled by its skill name", () => {
+    expect(targetOf({ skill: "loop" })).toBe("loop");
+  });
 });

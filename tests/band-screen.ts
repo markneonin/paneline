@@ -13,7 +13,14 @@ export function shownText(node: unknown): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(shownText).join("");
   if (typeof node !== "object" || node === null) return "";
-  return shownText((node as Drawn).children);
+  const drawn = node as Drawn;
+  if (drawn.type === "Button" && drawn.children === undefined) return buttonLabel(drawn.props);
+  return shownText(drawn.children);
+}
+
+function buttonLabel(props: Props | undefined): string {
+  const label = props?.label;
+  return typeof label === "string" ? label : "";
 }
 
 export function colouredPieces(
@@ -28,6 +35,20 @@ export function colouredPieces(
   const parts = itemsOf(children);
   if (parts.every((part) => typeof part === "string")) return [{ text: parts.join(""), color }];
   return parts.flatMap((part) => colouredPieces(part, color));
+}
+
+export function coloursOfText(drawn: unknown, text: string): unknown[] {
+  const pieces = colouredPieces(drawn);
+  const start = pieces
+    .map((piece) => piece.text)
+    .join("")
+    .indexOf(text);
+  if (start === -1) throw new Error(`"${text}" is not drawn`);
+  const perCharacter = pieces.flatMap((piece) =>
+    Array.from({ length: piece.text.length }, () => piece.color),
+  );
+  const shown = perCharacter.slice(start, start + text.length);
+  return [...new Set(shown.filter((_, index) => text[index] !== " "))];
 }
 
 function itemsOf(children: unknown): (string | Drawn)[] {

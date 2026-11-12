@@ -26,6 +26,8 @@ export const FLUSH_MS = 1_000;
 export const CLEAR_LABEL = "clear";
 export const FAILING_COMMAND = "fail";
 
+const NEXT_PAGE_ARROW = "›";
+const TAB_PAGES = 5;
 const DEFAULT_TAB = "Activity";
 const NOW = 200_000;
 const SETTLE_TICKS = 5;
@@ -56,12 +58,15 @@ export function worldOf(on: On): World {
     return { value: undefined };
   });
   on("session.id", () => ({ value: SESSION_ID }));
+  on("session.repo", () => ({ value: null }));
+  on("session.root", () => ({ value: WORK }));
   on("classic.SessionStart", () => ({}));
   on("ui.open", () => ({ value: { isPlaced: true } }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: WORK }));
   on("agent.list", () => ({ value: [] }));
   on("fs.exists", () => ({ value: true }));
@@ -84,18 +89,28 @@ export function worldOf(on: On): World {
     return { result: { structuredPatch: [{ lines }] }, text: "edited" };
   });
   on("process.run", (_$, e) => {
-    const stdout = e.argv.includes("--abbrev-ref")
-      ? "main"
-      : e.argv.includes("--show-toplevel")
-        ? e.argv.includes("HEAD")
-          ? `${WORK}\n${nextHead(world)}`
-          : WORK
-        : e.argv.includes("--numstat")
-          ? world.landing.diff
-          : "";
+    const stdout =
+      e.argv.includes("--abbrev-ref") && e.argv.includes("--show-toplevel")
+        ? `${WORK}\n${nextHead(world)}\nmain`
+        : e.argv.includes("--abbrev-ref")
+          ? "main"
+          : e.argv.includes("--show-toplevel")
+            ? e.argv.includes("HEAD")
+              ? `${WORK}\n${nextHead(world)}`
+              : WORK
+            : (landingAnswer(e.argv, world.landing.diff) ?? "");
     return { value: { exitCode: 0, stdout, stderr: "" } } as never;
   });
   return world;
+}
+
+function landingAnswer(argv: readonly string[], numstat: string): string | undefined {
+  const lines = numstat.split("\n").filter((line) => line !== "");
+  if (argv.includes("--others") || argv.includes("--name-status")) return "";
+  if (argv.includes("--name-only"))
+    return lines.map((line) => line.split("\t")[2] ?? "").join("\n");
+  if (!argv.includes("--numstat")) return undefined;
+  return lines.map((line) => `${line}\0`).join("");
 }
 
 export async function paneOnTab(
@@ -109,12 +124,30 @@ export async function paneOnTab(
 }
 
 export async function showTab(pane: Pane, label: string): Promise<void> {
-  const target = (await pane.findAll({ type: "Button" })).find(
-    (button) => button.props.label === label,
-  );
-  expect(target, `a ${label} tab button`).toBeDefined();
-  await pane.press({ key: target?.key ?? "" });
+  await pressPagedTab(pane, label);
   await settle(pane);
+}
+
+export async function pressPagedTab(pane: Pane, label: string): Promise<void> {
+  for (let page = 0; page < TAB_PAGES; page++) {
+    const buttons = await pane.findAll({ type: "Button" });
+    const target = buttons.find((button) => button.props.label === label);
+    if (target !== undefined) {
+      await pane.press({ key: target.key ?? "" });
+      return;
+    }
+    if (await isSelectedTab(pane, label)) return;
+    const next = buttons.find((button) => String(button.props.label).includes(NEXT_PAGE_ARROW));
+    if (next === undefined) break;
+    await pane.press({ key: next.key ?? "" });
+    await settle(pane);
+  }
+  expect(undefined, `a ${label} tab button`).toBeDefined();
+}
+
+async function isSelectedTab(pane: Pane, label: string): Promise<boolean> {
+  const [bar = ""] = await texts(pane);
+  return bar.split(/\s+/).includes(label);
 }
 
 export async function lines(pane: Pane): Promise<Line[]> {

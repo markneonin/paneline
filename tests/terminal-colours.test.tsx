@@ -127,6 +127,7 @@ async function sessionWithTheme($: Engine, on: On, theme: string | { value: stri
     return <Text>engine</Text>;
   });
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);
@@ -174,6 +175,7 @@ function mountDiff($: Engine) {
     props: {
       tool_use_id: "diff-1",
       tool: "Edit",
+      isExpanded: true,
       isErrored: false,
       output: {
         filePath: `${CWD}/a.ts`,

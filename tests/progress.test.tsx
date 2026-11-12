@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "claude-code/testing";
-import type { On, PromptOrigin, ToolCallResult } from "claude-code";
+import type { On, PromptOrigin, Shaped, ToolCallResult } from "claude-code";
 import type { Engine, MockClock } from "claude-code/testing";
 
 import { shownText } from "./band-screen";
@@ -420,7 +420,7 @@ describe("a progress call stays out of the counts", () => {
 
     await runThreeCalls($, world);
 
-    expect(toolsIn(world, "calls")).toEqual(["Read", OTHER_MCP_TOOL]);
+    expect(callToolsIn(world)).toEqual(["Read", OTHER_MCP_TOOL]);
   });
 
   test("P8c it is not in the MCP use counts, a normal MCP call is", async ($, on) => {
@@ -581,6 +581,7 @@ async function bandText($: Engine): Promise<string> {
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: 10,
       bodyColumns: BAND_COLUMNS,
@@ -638,6 +639,11 @@ async function runThreeCalls($: Engine, world: World): Promise<void> {
 
 function toolsIn(world: World, key: string): string[] {
   return ((stateOf(world, key) ?? []) as { tool: string }[]).map((entry) => entry.tool);
+}
+
+function callToolsIn(world: World): string[] {
+  const saved = stateOf(world, "calls") as Shaped<{ tool: string }[]> | undefined;
+  return (saved?.value ?? []).map((entry) => entry.tool);
 }
 
 function noteFlags(replies: ToolCallResult[]): boolean[] {
@@ -805,6 +811,7 @@ function worldOf(on: On): World {
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: WORK }));
   on("ui.render", { component: "Pane" }, ($, e) => {
     const { Text } = $.ui.resolve(e);

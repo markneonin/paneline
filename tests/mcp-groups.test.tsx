@@ -3,6 +3,7 @@ import type { On, SessionContextBreakdown } from "claude-code";
 import type { Engine, Mounted } from "claude-code/testing";
 
 import { palette } from "../hooks/palette";
+import { pressPagedTab } from "./clear-world";
 import { collect, textOf } from "./draw-tree";
 import { lines, serverEntriesOf } from "./mcp-tree";
 import type { Node } from "./draw-tree";
@@ -121,6 +122,7 @@ function worldOf(on: On, options: WorldOptions = {}): void {
   });
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
   on("fs.read", (_$, e) => ({
     value: JSON.stringify(e.path === `${CWD}/.mcp.json` ? projectMcp : config),
@@ -148,11 +150,7 @@ async function paneOnTab($: Engine): Promise<Pane> {
     },
     viewport: { columns: COLUMNS, rows: PANE_ROWS },
   });
-  const tab = (await pane.findAll({ type: "Button" })).find(
-    (button) => button.props.label === "MCP",
-  );
-  expect(tab, "an MCP tab button").toBeDefined();
-  await pane.press({ key: tab?.key ?? "" });
+  await pressPagedTab(pane, "MCP");
   for (let tick = 0; tick < SETTLE_TICKS; tick++) await pane.redraw();
   return pane;
 }

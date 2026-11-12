@@ -66,7 +66,7 @@ describe("agents tree writes while the Agents tab polls", () => {
     expect(world.stateWrites("agents")).toHaveLength(1);
   });
 
-  test("P2 an agent the engine now lists as killed shows as killed by the next tick", async ($, on) => {
+  test("P2 an agent the engine now lists as killed shows as stopped by the next tick", async ($, on) => {
     const world = await worldOf($, on, [RUNNING_AGENT]);
     const pane = await mountPane($);
     await showAgentsTab(pane);
@@ -76,7 +76,7 @@ describe("agents tree writes while the Agents tab polls", () => {
 
     await justAfterTick(world);
 
-    expect(world.tree()[RUNNING_AGENT.id]?.status).toBe("killed");
+    expect(world.tree()[RUNNING_AGENT.id]?.status).toBe("stopped");
   });
 
   test("P3 a new agent shows within one poll tick and the tree is not written between ticks", async ($, on) => {
@@ -303,12 +303,15 @@ async function worldOf($: Engine, on: On, listing: Listing[]): Promise<World> {
   });
   on("store.keys", () => ({ value: [...store.keys()] }));
   on("session.id", () => ({ value: sessionId }));
+  on("session.repo", () => ({ value: null }));
+  on("session.root", () => ({ value: "/work" }));
   on("classic.SessionStart", () => ({}));
   on("ui.open", () => ({ value: { isPlaced: true } }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.spawn", () => ({ model: "sonnet", agentId: `spawned-${++spawned}` }));
   on("agent.list", () => {

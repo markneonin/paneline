@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import type { On, SessionContextBreakdown } from "claude-code";
 import type { Engine, Mounted } from "claude-code/testing";
 
+import { pressPagedTab } from "./clear-world";
 import { lines, serverEntriesOf } from "./mcp-tree";
 
 type Pane = Mounted<"terminal", "Pane">;
@@ -94,6 +95,7 @@ function worldOf(on: On, project: Record<string, string[]>, cwd = CWD): World {
   });
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: cwd }));
   on("fs.read", () => {
     return {
@@ -129,7 +131,7 @@ async function paneOnTab($: Engine): Promise<Pane> {
     },
     viewport: { columns: COLUMNS, rows: PANE_ROWS },
   });
-  await pressNth(pane, "MCP");
+  await pressPagedTab(pane, "MCP");
   for (let tick = 0; tick < SETTLE_TICKS; tick++) await pane.redraw();
   return pane;
 }

@@ -1,10 +1,7 @@
 import { atom, read, update } from "claude-code";
-import type { EngineInterface, On } from "claude-code";
+import type { On } from "claude-code";
 
-import { countsIn, withUse } from "./use-counts";
-import type { UseCounts } from "./use-counts";
-
-export const SKILL_USES_KEY = "skillUses";
+import { countUse, storedUses } from "./store-queue";
 
 const launchFolderAtom = atom({ plugin: "paneline", key: "launchFolder" } as const, "");
 const skillUsesAtom = atom(
@@ -16,9 +13,9 @@ export function trackSkills(on: On): void {
   on("session.start", { isInteractive: true }, async ($, e, next) => {
     const known = await read($, launchFolderAtom);
     const folder = known === "" ? e.cwd : known;
-    const counts = countsIn(await storedUses($), folder);
     await update($, launchFolderAtom, () => folder);
-    await update($, skillUsesAtom, () => counts);
+    const uses = await storedUses($, "skill", folder);
+    await update($, skillUsesAtom, () => uses);
     return next(e);
   });
 
@@ -26,13 +23,11 @@ export function trackSkills(on: On): void {
     const prompt = await next(e);
     const folder = await read($, launchFolderAtom);
     if (folder === "") return prompt;
-    const all = withUse(await storedUses($), folder, e.skill);
-    await $.store.set(SKILL_USES_KEY, all);
-    await update($, skillUsesAtom, () => countsIn(all, folder));
+    countUse($, "skill", folder, e.skill);
+    await update($, skillUsesAtom, (counts) => ({
+      ...counts,
+      [e.skill]: (counts[e.skill] ?? 0) + 1,
+    }));
     return prompt;
   });
-}
-
-async function storedUses($: EngineInterface): Promise<UseCounts> {
-  return ((await $.store.get(SKILL_USES_KEY)) ?? {}) as UseCounts;
 }

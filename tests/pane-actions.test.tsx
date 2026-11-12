@@ -31,8 +31,6 @@ const RUNNING_AGENT = {
   status: "running",
   startedAt: 0,
   ctxTokens: 0,
-  tokensIn: 0,
-  tokensOut: 0,
   running: [],
 };
 
@@ -122,6 +120,7 @@ function worldOf(on: On): World {
     return { value: { startedAt: 0, context, rateLimits: [] } } as never;
   });
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => {
     world.listCalls++;

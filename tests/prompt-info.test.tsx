@@ -115,6 +115,7 @@ async function worldOf(
   const cwd = options.cwd ?? WORK_DIR;
 
   on("session.model", () => ({ value: model }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: cwd }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
@@ -141,6 +142,7 @@ async function worldOf(
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: 10,
       bodyColumns: columns,

@@ -5,6 +5,13 @@ import type { PromptInfo } from "../types";
 import { emptySpend } from "./spend-model";
 
 const COLOR_ENTRY = '"type":"agent-color"';
+const RANGE_SCAN_SCRIPT =
+  '{ tail -c +"$1" "$2" | head -c "$4"; echo; } | LC_ALL=C awk -v p="$3" \'NR > 1 && index(prev, p) { print prev } { prev = $0 } END { print length(prev) }\'';
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+
+type ModelSettings = Record<string, { effortLevel?: string } | undefined>;
+
+const scannedOffsets = new Map<string, number>();
 
 const promptInfoAtom = atom(
   { plugin: "paneline", key: "promptInfo" } as const,
@@ -45,11 +52,21 @@ export function trackPromptInfo(on: On): void {
   on("command.run", { command: "model" }, async ($, e, next) => {
     const result = await next(e);
     await refreshModel($);
+    await refreshEffort($, await $.session.model());
+    return result;
+  });
+
+  on("command.run", { command: "effort" }, async ($, e, next) => {
+    const result = await next(e);
+    const level = e.args.trim();
+    if (EFFORT_LEVELS.includes(level)) await change($, { effort: level });
+    else await refreshEffort($, await $.session.model());
     return result;
   });
 
   on("classic.PostModelSwitch", async ($, e, next) => {
     await change($, { model: e.to_model });
+    await refreshEffort($, e.to_model);
     await update($, spendAtom, (state) => ({ ...state, mainCacheTtl: e.cache_ttl }));
     return next(e);
   });
@@ -75,7 +92,15 @@ export function trackPromptInfo(on: On): void {
 }
 
 async function seed($: EngineInterface): Promise<void> {
-  await change($, { model: await $.session.model(), cwd: await $.session.cwd() });
+  const model = await $.session.model();
+  await change($, { model, cwd: await $.session.cwd() });
+  await refreshEffort($, model);
+}
+
+async function refreshEffort($: EngineInterface, model: string): Promise<void> {
+  const saved = (await $.settings.read({ key: "modelSettings" })) as ModelSettings | undefined;
+  const effortLevel = saved?.[model]?.effortLevel;
+  if (effortLevel !== undefined) await change($, { effort: effortLevel });
 }
 
 async function refreshModel($: EngineInterface): Promise<void> {
@@ -115,15 +140,37 @@ async function lastAgentColor(
   $: EngineInterface,
   transcriptPath: string,
 ): Promise<string | undefined> {
+  const size = (await $.fs.stat(transcriptPath).catch(() => undefined))?.size;
   try {
-    const { stdout } = await $.process.run(["grep", "-a", COLOR_ENTRY, transcriptPath]);
-    return stdout
-      .trimEnd()
-      .split("\n")
-      .reverse()
-      .map(colorOf)
-      .find((color) => color !== undefined);
+    if (size === undefined) {
+      const { stdout } = await $.process.run(["grep", "-a", COLOR_ENTRY, transcriptPath]);
+      return lastColorIn(stdout.trimEnd().split("\n"));
+    }
+    const saved = scannedOffsets.get(transcriptPath) ?? 0;
+    const offset = size >= saved ? saved : 0;
+    if (size === offset) return undefined;
+    const { stdout } = await $.process.run([
+      "sh",
+      "-c",
+      RANGE_SCAN_SCRIPT,
+      "sh",
+      String(offset + 1),
+      transcriptPath,
+      COLOR_ENTRY,
+      String(size - offset),
+    ]);
+    const lines = stdout.trimEnd().split("\n");
+    const unterminatedBytes = Number(lines.pop());
+    scannedOffsets.set(transcriptPath, size - unterminatedBytes);
+    return lastColorIn(lines);
   } catch {
     return undefined;
   }
+}
+
+function lastColorIn(lines: string[]): string | undefined {
+  return lines
+    .reverse()
+    .map(colorOf)
+    .find((color) => color !== undefined);
 }

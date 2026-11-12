@@ -103,6 +103,7 @@ function paneWorld(on: On, theme: string): void {
   }));
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);

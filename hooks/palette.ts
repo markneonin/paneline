@@ -49,7 +49,7 @@ export const categoryColors = [
 ] as const satisfies readonly ThemeKey[];
 
 export type Fills = {
-  source: "theme" | "plain" | "ansi";
+  source: string;
   userBand: string;
   panel: string;
   addedBand: string;
@@ -64,6 +64,7 @@ export type Fills = {
   hues: readonly string[];
   prose: string | undefined;
   onBand: string | undefined;
+  defaultAccent?: string;
 };
 
 export const themeFills: Fills = {
@@ -90,7 +91,14 @@ const BAND_TEXT = "ansi256(0)";
 
 const ansiFills: Fills = { ...plainFills, source: "ansi", onBand: BAND_TEXT };
 
+const lightAnsiFills: Fills = {
+  ...ansiFills,
+  source: "light-ansi",
+  defaultAccent: "clawd_background",
+};
+
 export function fillsFor(theme: string): Fills {
+  if (theme === "light-ansi") return lightAnsiFills;
   if (theme.endsWith("-ansi")) return ansiFills;
   return theme.startsWith("light") ? plainFills : themeFills;
 }

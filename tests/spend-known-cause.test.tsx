@@ -8,6 +8,9 @@ import {
   SONNET,
   agentRequest,
   blocks,
+  lines,
+  missCaptionOf,
+  setSessionCost,
   mainTurn,
   missesOf,
   spawnAgent,
@@ -16,9 +19,14 @@ import {
 } from "./spend-world";
 import type { Miss, Pane } from "./spend-world";
 
+const SESSION_COST = 1;
+
 const CONTEXT = 100_000;
 const SEVEN_MINUTES = 7;
 const AGENT_PROMPT = 120_000;
+const HAIKU_5_5 = "claude-haiku-5-5";
+const CALL_TOKENS = 40_000;
+const LONG_CALL_TOKENS = 150_000;
 
 describe("spend misses with a known cause", () => {
   test("K1 switching from sonnet to opus when the context grew from 34.4k to 83k with 59.8k written shows a model switch miss of 11.2k and ~$0.05", async ($, on) => {
@@ -53,7 +61,7 @@ describe("spend misses with a known cause", () => {
     expect(missesOf(block)).toEqual([]);
   });
 
-  test("K4 a model switch that rebuilds exactly 2,000 tokens shows model switch, 2k and ~$0.01", async ($, on) => {
+  test("K4 a model switch that rebuilds exactly 2,000 tokens shows model switch, 2k and <$0.01", async ($, on) => {
     const world = worldOf(on, API_KEY);
     await mainTurn($, world, { model: SONNET, tokens: { write: CONTEXT }, context: CONTEXT });
     await mainTurn($, world, { model: OPUS, tokens: { write: 2_000 }, context: CONTEXT });
@@ -61,7 +69,7 @@ describe("spend misses with a known cause", () => {
     const block = await cacheIn(await spendPane($));
 
     expect(withoutTime(missesOf(block))).toEqual([
-      { cause: "model switch", tokens: "2k", dollars: "~$0.01" },
+      { cause: "model switch", tokens: "2k", dollars: "<$0.01" },
     ]);
   });
 
@@ -149,6 +157,54 @@ describe("spend misses with a known cause", () => {
     expect(withoutTime(missesOf(block))).toEqual([
       { cause: "model switch", tokens: "20k", dollars: "~$0.02" },
     ]);
+  });
+
+  test("K9 a Haiku 5.5 turn of three calls after 7 minutes idle that rebuilds 30k shows the miss at <$0.01 and the summary at <$0.01 lost, not ~$0.02", async ($, on) => {
+    const world = worldOf(on, API_KEY);
+    await mainTurn($, world, {
+      model: HAIKU_5_5,
+      tokens: { write: CALL_TOKENS },
+      context: CALL_TOKENS,
+    });
+    await mainTurn($, world, {
+      model: HAIKU_5_5,
+      tokens: { read: 90_000, write: 30_000 },
+      context: CALL_TOKENS,
+      idleMinutes: SEVEN_MINUTES,
+    });
+
+    await setSessionCost($, world, SESSION_COST);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+
+    expect(withoutTime(missesOf(block))).toEqual([
+      { cause: "after 7m idle", tokens: "30k", dollars: "<$0.01" },
+    ]);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "1 miss", lost: "<$0.01" });
+  });
+
+  test("K10 a single Haiku 5.5 call of 150k after 7 minutes idle that rebuilds 30k shows the miss at ~$0.02 and the summary at ~$0.02 lost", async ($, on) => {
+    const world = worldOf(on, API_KEY);
+    await mainTurn($, world, {
+      model: HAIKU_5_5,
+      tokens: { write: CALL_TOKENS },
+      context: CALL_TOKENS,
+    });
+    await mainTurn($, world, {
+      model: HAIKU_5_5,
+      tokens: { read: 10_000, write: 140_000 },
+      context: LONG_CALL_TOKENS,
+      idleMinutes: SEVEN_MINUTES,
+    });
+
+    await setSessionCost($, world, SESSION_COST);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+
+    expect(withoutTime(missesOf(block))).toEqual([
+      { cause: "after 7m idle", tokens: "30k", dollars: "~$0.02" },
+    ]);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "1 miss", lost: "~$0.02" });
   });
 });
 

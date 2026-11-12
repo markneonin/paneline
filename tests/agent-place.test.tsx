@@ -12,7 +12,7 @@ const NOW = 200_000;
 const FLUSH_MS = 1_000;
 const COLUMNS = 100;
 const TALL_ROWS = 40;
-const SHORT_ROWS = 22;
+const SHORT_ROWS = 18;
 const MAIN_ROOT = "/work/paneline";
 const WORKTREE_ROOT = "/work/paneline-signals";
 const written = new Map<string, unknown>();
@@ -123,14 +123,14 @@ describe("finding the place", () => {
     expect(w.tree()["agent-2"]?.branch).toBe("feature/signals");
   });
 
-  test("P8 tool calls of a placed agent spawn no process", async ($, on) => {
+  test("P8 tool calls of a placed agent ask git only for the root of a first edit", async ($, on) => {
     const w = world(on, { [WORKTREE_ROOT]: answer(WORKTREE_ROOT, "feature/signals") });
     await $.agent.spawn(spawnInput({ cwd: WORKTREE_ROOT }));
 
     await subagentCall($, "agent-1", { tool: "Edit", file_path: `${WORKTREE_ROOT}/src/a.ts` });
     await subagentCall($, "agent-1", { tool: "Bash", command: `cd ${WORKTREE_ROOT} && ls` });
 
-    expect(w.processes).toHaveLength(1);
+    expect(w.processes).toHaveLength(2);
   });
 
   test("P9 the directory of a first file edit places an agent that had no cwd", async ($, on) => {
@@ -170,13 +170,13 @@ describe("finding the place", () => {
     expect(w.tree()["agent-1"]?.branch).toBeUndefined();
   });
 
-  test("P12 the main chat tool calls spawn no process", async ($, on) => {
+  test("P12 the main chat edit asks git only for the root of the edited file", async ($, on) => {
     const w = world(on);
 
     await $.tool.call({ tool: "Edit", file_path: `${WORKTREE_ROOT}/src/a.ts` } as never);
     await w.clock.advance(FLUSH_MS);
 
-    expect(w.processes).toEqual([]);
+    expect(w.processes.map((argv) => argv.slice(-1))).toEqual([["--show-toplevel"]]);
   });
 
   test("P13 when the agent finishes its branch is read once more", async ($, on) => {
@@ -242,6 +242,7 @@ function world(on: On, answers: Record<string, GitAnswer> = {}): World {
   on("classic.SessionStart", () => ({}));
   mock.env(on, { HOME: "/h/u" });
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("ui.render", { component: "Pane" }, ($, e) => {
     const { Text } = $.ui.resolve(e);
     return <Text>engine pane</Text>;
@@ -277,8 +278,6 @@ function agent(fields: Partial<AgentNode> & { id: string }): AgentNode {
     status: "done",
     startedAt: NOW - 10_000,
     ctxTokens: 0,
-    tokensIn: 0,
-    tokensOut: 0,
     running: [],
     ...fields,
   };

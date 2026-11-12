@@ -234,7 +234,7 @@ function codePanelOf(tree: Node): Node {
     const [band, body] = childrenOf(box);
     return (
       childrenOf(box).length === 2 &&
-      collect(band!, "Button").length === 1 &&
+      collect(band!, "Button").filter((button) => button.props?.label === "Copy").length === 1 &&
       collect(body!, "Code").length === 1
     );
   });

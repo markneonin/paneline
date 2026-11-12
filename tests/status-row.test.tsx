@@ -1,7 +1,8 @@
 import { describe, expect, mock, test } from "claude-code/testing";
-import type { On, SessionContextBreakdown } from "claude-code";
+import type { ConfigRow, On, SessionContextBreakdown, SessionMessage } from "claude-code";
 import type { Engine } from "claude-code/testing";
 
+import { palette } from "../hooks/palette";
 import { accentOf, ENGINE_DEFAULT_GREY } from "../hooks/session-color";
 import { colouredPieces, screenRows } from "./band-screen";
 
@@ -20,7 +21,15 @@ const THIRTY_SECONDS_MS = 30_000;
 const WINDOW = 200_000;
 const TOKENS_PER_PERCENT = WINDOW / 100;
 const WIDE = 200;
+const OWN_PID = 4100;
+const MEASURED_PERCENT = 72;
+const START_ESTIMATE_PERCENT = 50;
+const PRE_COMPACT_PERCENT = 53;
+const COMPACT_ESTIMATE_PERCENT = 24;
+const COMPACT_MEASURED_PERCENT = 31;
+const SUMMARY_MESSAGE: SessionMessage = { role: "user", text: "summary", toolUses: [] };
 const SHOT_COLUMNS = 120;
+const SIXTY_COLUMNS = 60;
 const CHIPS = " opus 5.5  high  ~/workspace/projects/paneline ";
 const BAR_CELLS = /[▰▱]+/g;
 const COLUMN_TEXTS = /[≡◷▦][^≡◷▦]*?\d+%/g;
@@ -84,11 +93,22 @@ const ALL_PENDING: Progress = {
 type Limit = { percentUsed: number; resetsInMs?: number };
 type Reading = { context?: number; five?: Limit; seven?: Limit };
 
+const MICROTASK_TURNS = 200;
+const HALF_WINDOW_TOKENS = WINDOW / 2;
+const SAVED_LIMITS: SavedLimit[] = [
+  { label: "5h", percent: 48, resetsAt: new Date(NOW + 2 * HOUR_MS).toISOString() },
+  { label: "7d", percent: 59, resetsAt: new Date(NOW + 3 * DAY_MS).toISOString() },
+];
 const FULL_BARS = "▰▰▰▰▱▰▰▰▰▱▱▱▱▰▰▰▰▰▱▱▱";
 const FULL_READING: Reading = {
   context: 72,
   five: { percentUsed: 48, resetsInMs: 2 * HOUR_MS },
   seven: { percentUsed: 59, resetsInMs: 3 * DAY_MS },
+};
+const SCREENSHOT_READING: Reading = {
+  context: 72,
+  five: { percentUsed: 18, resetsInMs: 4 * HOUR_MS + 18 * MINUTE_MS },
+  seven: { percentUsed: 5, resetsInMs: 6 * DAY_MS + 23 * HOUR_MS },
 };
 const HIGH_BARS = "▰▰▰▰▰▰▰▰▰▰▰▰▱▰▰▰▰▰▰▰▰";
 const HIGH_READING: Reading = {
@@ -201,7 +221,7 @@ describe("the status row", () => {
     expect(shown.map(({ text }) => text).join("")).toContain("◷ 2h 48%");
     expect(shown.map(({ text }) => text).join("")).toContain("▦ 3d 59%");
     expect(barsOf(shown)).toBe(FULL_BARS);
-    expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([GREY]));
+    expect(new Set(accentPieces(shown).map(({ color }) => color))).toEqual(new Set([GREY]));
   });
 
   test("R9 after /color red every piece of the meter block is red", async ($, on) => {
@@ -214,7 +234,7 @@ describe("the status row", () => {
     expect(shown.map(({ text }) => text).join("")).toContain("◷ 2h 48%");
     expect(shown.map(({ text }) => text).join("")).toContain("▦ 3d 59%");
     expect(barsOf(shown)).toBe(FULL_BARS);
-    expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([RED]));
+    expect(new Set(accentPieces(shown).map(({ color }) => color))).toEqual(new Set([RED]));
   });
 
   test("R19 after /color red at 90% and above the whole meter block stays red", async ($, on) => {
@@ -227,7 +247,7 @@ describe("the status row", () => {
     expect(shown.map(({ text }) => text).join("")).toContain("◷ 2h 92%");
     expect(shown.map(({ text }) => text).join("")).toContain("▦ 3d 97%");
     expect(barsOf(shown)).toBe(HIGH_BARS);
-    expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([RED]));
+    expect(new Set(accentPieces(shown).map(({ color }) => color))).toEqual(new Set([RED]));
   });
 
   test("R20 by default at 90% and above the whole meter block stays grey", async ($, on) => {
@@ -240,7 +260,7 @@ describe("the status row", () => {
     expect(shown.map(({ text }) => text).join("")).toContain("◷ 2h 92%");
     expect(shown.map(({ text }) => text).join("")).toContain("▦ 3d 97%");
     expect(barsOf(shown)).toBe(HIGH_BARS);
-    expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([GREY]));
+    expect(new Set(accentPieces(shown).map(({ color }) => color))).toEqual(new Set([GREY]));
   });
 
   test("R23 a 5h reset time that has passed reads 0% with no time and an empty bar", async ($, on) => {
@@ -309,6 +329,222 @@ describe("the status row", () => {
     expect(rows[2]?.endsWith(`≡ 72%   ◷ 0%   ▦ 2d 59%${PANE_TOGGLE}`)).toBe(true);
   });
 
+  test("R32 a fresh session shows the share already taken before any prompt", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 50%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R33 a breakdown that arrives after a measure does not replace the measured share", async ($, on) => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS, holdFullBreakdown: held });
+    await $.session.start(SESSION_START);
+    await measure($, { context: 72 });
+    release();
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 72%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R34 clearing the session refills the share from a new breakdown", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await startWith($, world, { context: 72 });
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 10);
+
+    await $.classic.SessionStart({ source: "clear" });
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 10%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R42 a compact refills the share from the breakdown after it, not the share stored before it", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: 53 });
+    world.setLiveTokens(TOKENS_PER_PERCENT * 53);
+    await world.settle();
+
+    await $.session.compact({ trigger: "manual", messages: [SUMMARY_MESSAGE] });
+    await $.classic.SessionStart({ source: "compact" });
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 24);
+    world.setLiveTokens(undefined);
+    await mountBand($, WIDE);
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 24%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R46 a clear right after a compact shows the clear reseed, not the post-compact share", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: 53 });
+    world.setLiveTokens(TOKENS_PER_PERCENT * 53);
+    await world.settle();
+    await $.session.compact({ trigger: "manual", messages: [SUMMARY_MESSAGE] });
+    await $.classic.SessionStart({ source: "compact" });
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 24);
+    world.setLiveTokens(undefined);
+    await mountBand($, WIDE);
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 5);
+    await $.classic.SessionStart({ source: "clear" });
+    await world.settle();
+    await mountBand($, WIDE);
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 5%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R44 a compact keeps the share stored before it until the engine drops its old reading", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: 53 });
+    world.setLiveTokens(TOKENS_PER_PERCENT * 53);
+    await world.settle();
+
+    await $.session.compact({ trigger: "manual", messages: [SUMMARY_MESSAGE] });
+    await $.classic.SessionStart({ source: "compact" });
+    await world.settle();
+    await mountBand($, WIDE);
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 53%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R45 the first response after a compact replaces the share read from the breakdown", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: TOKENS_PER_PERCENT * 24 });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: 53 });
+    await world.settle();
+    await $.session.compact({ trigger: "manual", messages: [SUMMARY_MESSAGE] });
+    await measure($, { context: 31 });
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 60);
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 31%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R43 a startup keeps the share stored before it", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: 72 });
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 10);
+
+    await $.classic.SessionStart({ source: "startup" });
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 72%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R35 a new process with no engine reading shows the saved 5h and 7d meters", async ($, on) => {
+    const world = worldOf(on, { savedLimits: SAVED_LIMITS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]).toContain("◷ 2h 48%   ▦ 3d 59%");
+  });
+
+  test("R36 the first fresh reading replaces the saved 5h and 7d meters", async ($, on) => {
+    const world = worldOf(on, { savedLimits: SAVED_LIMITS });
+    await $.session.start(SESSION_START);
+    await measure($, {
+      five: { percentUsed: 30, resetsInMs: HOUR_MS },
+      seven: { percentUsed: 61, resetsInMs: DAY_MS },
+    });
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]).toContain("◷ 1h 30%   ▦ 1d 61%");
+  });
+
+  test("R37 a changed reading is saved for the next process", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, FULL_READING);
+
+    expect(world.stored(LIMITS_KEY)).toEqual([
+      { label: "5h", percent: 48, resetsAt: new Date(NOW + 2 * HOUR_MS).toISOString() },
+      { label: "7d", percent: 59, resetsAt: new Date(NOW + 3 * DAY_MS).toISOString() },
+    ]);
+  });
+
+  test("R38 a 5h meter at 60% with 3 hours to its reset draws a plain bar with no pace marker", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      { context: 72, five: { percentUsed: 60, resetsInMs: 3 * HOUR_MS } },
+      WIDE,
+    );
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 3h 60%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▰▰▰▰▰▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R39 a 5h meter at 30% with 3 hours to its reset shows no pace mark", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      { context: 72, five: { percentUsed: 30, resetsInMs: 3 * HOUR_MS } },
+      WIDE,
+    );
+
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▰▰▱▱▱▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R40 a 5h meter at 40% with 3 hours to its reset, exactly on pace, shows no pace mark", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      { context: 72, five: { percentUsed: 40, resetsInMs: 3 * HOUR_MS } },
+      WIDE,
+    );
+
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▰▰▰▱▱▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R41 a 7d meter at 50% with 4 days 12 hours to its reset draws a plain bar with no pace marker", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      { context: 72, seven: { percentUsed: 50, resetsInMs: 4 * DAY_MS + 12 * HOUR_MS } },
+      WIDE,
+    );
+
+    expect(rows[2]?.endsWith(`≡ 72%   ▦ 4d 50%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▰▰▰▰▱▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
   test("R10 at 0% the context bar has no filled cell", async ($, on) => {
     const rows = await bandOf($, on, { ...FULL_READING, context: 0 }, WIDE);
 
@@ -375,7 +611,7 @@ describe("the status row", () => {
 
     expect(rows[2]?.endsWith(`◆ 60%    ≡ 72%   ◷ 2h 48%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
     expect(rows[3]?.endsWith(`▰▰▰▱▱    ▰▰▰▰▱   ▰▰▰▰▱▱▱▱   ▰▰▰▰▰▱▱▱${PANE_TOGGLE}`)).toBe(true);
-    expect(new Set(shown.map(({ color }) => color))).toEqual(new Set([RED]));
+    expect(new Set(accentPieces(shown).map(({ color }) => color))).toEqual(new Set([RED]));
   });
 
   test("R22 at 28 columns the task meter and the context stay and the 7d column is gone", async ($, on) => {
@@ -423,6 +659,189 @@ describe("the status row", () => {
     expect(Math.max(...rows.map((row) => row.length))).toBe(56);
     expect(rows.join("\n")).toContain("…xxx");
     expect(rows.join("\n")).toContain("≡ 72%");
+  });
+
+  test("at 60 columns all three meters stay and only their reset times go", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, SIXTY_COLUMNS);
+
+    expect(rows[2]).toBe(`${" ".repeat(34)}≡ 72%   ◷ 48%   ▦ 59%${PANE_TOGGLE}`);
+    expect(rows[3]).toBe(
+      ` opus 5.5  high  …/paneline ${" ".repeat(6)}▰▰▰▰▱   ▰▰▱▱▱   ▰▰▰▱▱${PANE_TOGGLE}`,
+    );
+  });
+
+  test("at 52 columns the 7d meter goes before the 5h meter and neither shows a reset time", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, 52);
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 48%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows.join("\n")).not.toContain("▦");
+    expect(rows.join("\n")).not.toContain("2h");
+  });
+
+  test("at 120 columns every meter keeps its reset time and the bars sit under the numbers", async ($, on) => {
+    const rows = await bandOf($, on, FULL_READING, SHOT_COLUMNS);
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 2h 48%   ▦ 3d 59%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]).toBe(`${CHIPS}${" ".repeat(41)}▰▰▰▰▱   ▰▰▰▰▱▱▱▱   ▰▰▰▰▰▱▱▱${PANE_TOGGLE}`);
+  });
+
+  test("at 60 columns a 5h meter ahead of pace keeps its warning colour with the reset time hidden", async ($, on) => {
+    const shown = await meterColoursIn(
+      $,
+      on,
+      { ...FULL_READING, five: { percentUsed: 80, resetsInMs: 3 * HOUR_MS } },
+      {},
+      SIXTY_COLUMNS,
+    );
+
+    expect(colourOfPiece(shown, "◷ ")).toBe(GREY);
+    expect(colourOfPiece(shown, "80%")).toBe(palette.alert);
+  });
+
+  test("R47 the 4h 18% and 6d 5% meters of the screenshot draw plain bars, no pace marker", async ($, on) => {
+    const rows = await bandOf(
+      $,
+      on,
+      {
+        context: 72,
+        five: { percentUsed: 18, resetsInMs: 4 * HOUR_MS + 18 * MINUTE_MS },
+        seven: { percentUsed: 5, resetsInMs: 6 * DAY_MS + 23 * HOUR_MS },
+      },
+      WIDE,
+    );
+
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 4h 18%   ▦ 6d 5%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▰▱▱▱▱▱▱▱   ▱▱▱▱▱▱▱${PANE_TOGGLE}`)).toBe(true);
+    expect(rows.join("\n")).not.toContain("┃");
+  });
+
+  test("R48 in a dark theme meters ahead of pace draw their percents in the warning colour", async ($, on) => {
+    const shown = await meterColoursIn($, on, SCREENSHOT_READING, { theme: "dark" });
+
+    expect(colourOfPiece(shown, "18%")).toBe(palette.alert);
+    expect(colourOfPiece(shown, "5%")).toBe(palette.alert);
+  });
+
+  test("R49 in a light theme a meter ahead of pace draws its percent in the warning colour", async ($, on) => {
+    const shown = await meterColoursIn($, on, SCREENSHOT_READING, { theme: "light" });
+
+    expect(colourOfPiece(shown, "18%")).toBe(palette.alert);
+    expect(colourOfPiece(shown, "5%")).toBe(palette.alert);
+  });
+
+  test("R50 a 5h meter exactly on pace keeps the accent colour for its percent", async ($, on) => {
+    const shown = await meterColoursIn(
+      $,
+      on,
+      { context: 72, five: { percentUsed: 40, resetsInMs: 3 * HOUR_MS } },
+      {},
+    );
+
+    expect(colourOfPiece(shown, "40%")).toBe(GREY);
+  });
+
+  test("R51 a measure that lands while the start seed is written shows the measured share", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    const release = world.holdBreakdown();
+    await $.session.start(SESSION_START);
+    release();
+    await measure($, { context: 72 });
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 72%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R52 a measure that lands while the post-compact reseed waits shows the measured share", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: 53 });
+    world.setLiveTokens(TOKENS_PER_PERCENT * 53);
+    await world.settle();
+    await $.session.compact({ trigger: "manual", messages: [SUMMARY_MESSAGE] });
+    await $.classic.SessionStart({ source: "compact" });
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * 24);
+    world.setLiveTokens(undefined);
+    const release = world.holdBreakdown();
+    await mountBand($, WIDE);
+    await world.settle();
+    await measure($, { context: 31 });
+    release();
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 31%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R53 a measure that lands while the start seed is written keeps the estimate out of the Sessions own row", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS, ownPid: OWN_PID });
+    await $.classic.SessionStart({ source: "startup" });
+    const release = world.holdBreakdown();
+    await $.session.start(SESSION_START);
+    release();
+    await measure($, { context: MEASURED_PERCENT });
+    await world.settle();
+
+    expect(world.ownRowContexts()).toEqual([null, MEASURED_PERCENT]);
+  });
+
+  test("R54 a measure that changes only the rate limits leaves the start seed in place", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS });
+    const release = world.holdBreakdown();
+    await $.session.start(SESSION_START);
+    release();
+    await $.session.measure({
+      context: { window: WINDOW, tokens: 10 * TOKENS_PER_PERCENT, percent: 10 },
+      rateLimits: [{ kind: "five_hour", percentUsed: 30 }],
+      changed: ["rateLimits"],
+    });
+    await world.settle();
+
+    const rows = screenRows(await mountBand($, WIDE), WIDE);
+
+    expect(rows[2]?.endsWith(`≡ 50%   ◷ 30%${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R55 a real context reading that lands while the start estimate is written stays in the Sessions own row", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS, ownPid: OWN_PID });
+    await $.classic.SessionStart({ source: "startup" });
+    const release = world.holdOwnRow(START_ESTIMATE_PERCENT);
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: MEASURED_PERCENT });
+    await world.settle();
+    release();
+    await world.settle();
+
+    expect(world.ownRowContexts().at(-1)).toBe(MEASURED_PERCENT);
+  });
+
+  test("R56 a real context reading that lands while the post-compact estimate is written stays in the Sessions own row", async ($, on) => {
+    const world = worldOf(on, { breakdownTokens: HALF_WINDOW_TOKENS, ownPid: OWN_PID });
+    await $.classic.SessionStart({ source: "startup" });
+    await $.session.start(SESSION_START);
+    await world.settle();
+    await measure($, { context: PRE_COMPACT_PERCENT });
+    world.setLiveTokens(TOKENS_PER_PERCENT * PRE_COMPACT_PERCENT);
+    await world.settle();
+    await $.session.compact({ trigger: "manual", messages: [SUMMARY_MESSAGE] });
+    await $.classic.SessionStart({ source: "compact" });
+    await world.settle();
+    world.setBreakdownTokens(TOKENS_PER_PERCENT * COMPACT_ESTIMATE_PERCENT);
+    world.setLiveTokens(undefined);
+    const release = world.holdOwnRow(COMPACT_ESTIMATE_PERCENT);
+    await mountBand($, WIDE);
+    await world.settle();
+    await measure($, { context: COMPACT_MEASURED_PERCENT });
+    await world.settle();
+    release();
+    await world.settle();
+
+    expect(world.ownRowContexts().at(-1)).toBe(COMPACT_MEASURED_PERCENT);
   });
 
   test("PB1 at 0% the task bar is 5 cells under the ◆ text", async ($, on) => {
@@ -518,6 +937,85 @@ describe("the status row", () => {
     expect(rows[2]).toContain("◆ 100%");
     expect(barStartingAt(rows, "◆ 100%")).toBe("▰▰▰▰▰");
   });
+
+  test("R57 a 5h reset time that passes with no new message reads 0% with no time and an empty bar", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, {
+      ...FULL_READING,
+      five: { percentUsed: 85, resetsInMs: 10 * MINUTE_MS },
+    });
+    const band = await mountKeptBand($, WIDE);
+
+    await world.clock.advance(10 * MINUTE_MS + 1);
+    await world.settle();
+
+    const rows = screenRows(await band.drawn(), WIDE);
+    expect(rows[2]).toContain("≡ 72%   ◷ 0%   ▦ ");
+    expect(rows[2]).not.toContain("◷ 10m");
+    expect(rows[3]).toContain("▰▰▰▰▱   ▱▱▱▱   ");
+  });
+
+  test("R58 a 7d reset time that passes after the 5h reset reads 0% with no time and an empty bar", async ($, on) => {
+    const world = worldOf(on);
+    await startWith($, world, {
+      context: 72,
+      five: { percentUsed: 85, resetsInMs: 10 * MINUTE_MS },
+      seven: { percentUsed: 59, resetsInMs: 2 * HOUR_MS },
+    });
+    const band = await mountKeptBand($, WIDE);
+
+    await world.clock.advance(10 * MINUTE_MS + 1);
+    await world.clock.advance(2 * HOUR_MS - 10 * MINUTE_MS);
+    await world.settle();
+
+    const rows = screenRows(await band.drawn(), WIDE);
+    expect(rows[2]?.endsWith(`≡ 72%   ◷ 0%   ▦ 0%${PANE_TOGGLE}`)).toBe(true);
+    expect(rows[3]?.endsWith(`▰▰▰▰▱   ▱▱▱▱   ▱▱▱▱${PANE_TOGGLE}`)).toBe(true);
+  });
+
+  test("R59 a 5h reset moved 30 minutes later repaints the row at the new reset time, not at the old one", async ($, on) => {
+    const world = worldOf(on);
+    const redraws = countedRedraws(on);
+    await startWith($, world, {
+      ...FULL_READING,
+      five: { percentUsed: 85, resetsInMs: 10 * MINUTE_MS },
+    });
+    await mountKeptBand($, WIDE);
+    await measure($, { five: { percentUsed: 85, resetsInMs: 40 * MINUTE_MS } });
+    await world.settle();
+    const before = redraws.count;
+
+    await world.clock.advance(11 * MINUTE_MS);
+    await world.settle();
+    const repaintsBeforeNewReset = redraws.count - before;
+    await world.clock.advance(30 * MINUTE_MS);
+    await world.settle();
+
+    expect(repaintsBeforeNewReset).toBe(0);
+    expect(redraws.count - before).toBe(1);
+  });
+
+  test("R60 once both resets have passed, a row left open for another hour is not repainted", async ($, on) => {
+    const world = worldOf(on);
+    const redraws = countedRedraws(on);
+    await startWith($, world, {
+      context: 72,
+      five: { percentUsed: 85, resetsInMs: 10 * MINUTE_MS },
+      seven: { percentUsed: 59, resetsInMs: 2 * HOUR_MS },
+    });
+    await mountKeptBand($, WIDE);
+    await world.clock.advance(3 * HOUR_MS);
+    for (const context of [70, 71, 72]) {
+      await measure($, { context });
+      await world.settle();
+    }
+    const before = redraws.count;
+
+    await world.clock.advance(HOUR_MS);
+    await world.settle();
+
+    expect(redraws.count - before).toBe(0);
+  });
 });
 
 function shapeOf(row: string): string {
@@ -582,8 +1080,32 @@ function firstBar(rows: string[]): string {
   return (rows.at(-1) ?? "").match(BAR_CELLS)?.[0] ?? "";
 }
 
-async function meterPieces($: Engine): Promise<{ text: string; color: unknown }[]> {
-  return colouredPieces(await mountBand($, WIDE)).filter(({ text }) => ANY_METER_CELL.test(text));
+async function meterColoursIn(
+  $: Engine,
+  on: On,
+  reading: Reading,
+  options: WorldOptions,
+  columns = WIDE,
+): Promise<{ text: string; color: unknown }[]> {
+  const world = worldOf(on, options);
+  await startWith($, world, reading);
+  return meterPieces($, columns);
+}
+
+function colourOfPiece(pieces: { text: string; color: unknown }[], text: string): unknown {
+  return pieces.find((piece) => piece.text === text)?.color;
+}
+
+function accentPieces(
+  pieces: { text: string; color: unknown }[],
+): { text: string; color: unknown }[] {
+  return pieces.filter(({ color }) => color !== palette.alert);
+}
+
+async function meterPieces($: Engine, columns = WIDE): Promise<{ text: string; color: unknown }[]> {
+  return colouredPieces(await mountBand($, columns)).filter(({ text }) =>
+    ANY_METER_CELL.test(text),
+  );
 }
 
 type WorldOptions = {
@@ -591,7 +1113,27 @@ type WorldOptions = {
   engineRow?: string;
   colorEntries?: string[];
   progress?: Progress;
+  breakdownTokens?: number;
+  holdFullBreakdown?: Promise<void>;
+  savedLimits?: SavedLimit[];
+  theme?: "dark" | "light";
+  ownPid?: number;
 };
+
+type SavedLimit = { label: string; percent: number; resetsAt?: string };
+const LIMITS_KEY = "usageLimits";
+
+function themeRowOf(theme: "dark" | "light"): ConfigRow {
+  return {
+    key: "theme",
+    label: "Theme",
+    kind: "choice",
+    value: theme,
+    options: ["dark", "light"],
+    provider: { plugin: "claude-code", tier: "builtin" },
+    isLocked: false,
+  };
+}
 
 function worldOf(on: On, options: WorldOptions = {}) {
   const clock = mock.clock(on, { now: NOW });
@@ -599,27 +1141,61 @@ function worldOf(on: On, options: WorldOptions = {}) {
   const engineRow = options.engineRow ?? "engine row";
   const colorEntries = options.colorEntries ?? [];
   let progress = options.progress ?? NO_TASKS;
+  let breakdownTokens = options.breakdownTokens;
+  let liveTokens: number | undefined;
+  let heldBreakdown: Promise<void> | undefined;
+  const stored = new Map<string, unknown>();
+  if (options.savedLimits !== undefined) stored.set(LIMITS_KEY, options.savedLimits);
   mock.env(on, { HOME });
+  on("session.id", () => ({ value: "s1" }));
+  on("session.repo", () => ({ value: null }));
+  on("session.root", () => ({ value: "/work" }));
+  on("store.keys", () => ({ value: [...stored.keys()] }));
+  on("store.delete", (_$, e) => {
+    stored.delete(e.key);
+    return { value: undefined };
+  });
+  on("config.list", () => ({
+    value: options.theme === undefined ? [] : [themeRowOf(options.theme)],
+  }));
+  on("store.get", (_$, e) => ({ value: stored.get(e.key) }));
+  on("store.set", (_$, e) => {
+    stored.set(e.key, e.value);
+    return { value: undefined };
+  });
   on("state.get", (_$, e, next) =>
     (e.key as string) === "progress" ? { value: { value: progress, version: 1 } } : next(e),
   );
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: cwd }));
-  on("session.usage", () => ({
-    value: {
-      startedAt: 0,
-      context: {
-        window: WINDOW,
-        breakdown: { autoCompactThreshold: WINDOW } as unknown as SessionContextBreakdown,
+  on("session.usage", async (_$, e) => {
+    if (e.breakdown === "full") {
+      await options.holdFullBreakdown;
+      await heldBreakdown;
+    }
+    return {
+      value: {
+        startedAt: 0,
+        context: {
+          window: WINDOW,
+          ...(liveTokens === undefined ? {} : { tokens: liveTokens }),
+          breakdown: {
+            autoCompactThreshold: WINDOW,
+            ...(breakdownTokens === undefined ? {} : { totalTokens: breakdownTokens }),
+          } as unknown as SessionContextBreakdown,
+        },
+        rateLimits: [],
       },
-      rateLimits: [],
-    },
-  }));
+    };
+  });
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
+  on("fs.list", () => ({ value: [] }));
   on("ui.open", () => ({ value: { isPlaced: true } }));
   on("command.register", () => ({ value: {} }) as never);
   on("classic.SessionStart", () => ({}));
+  on("session.compact", () => ({ messages: [SUMMARY_MESSAGE] }));
   on("classic.UserPromptSubmit", () => ({}));
   on("classic.PostModelSwitch", () => ({}));
   on("classic.CwdChanged", () => ({}));
@@ -629,28 +1205,70 @@ function worldOf(on: On, options: WorldOptions = {}) {
     const { Text } = $.ui.resolve(e);
     return <Text>{engineRow}</Text>;
   });
+  const ownRowWrites: (number | null)[] = [];
+  let ownRowHold: { ctx: number; released: Promise<void> } | undefined;
+  on("fs.write", async (_$, e) => {
+    if (e.path.endsWith(`/${options.ownPid}.json`)) {
+      const { ctx } = JSON.parse(e.text) as { ctx: number | null };
+      if (ownRowHold?.ctx === ctx) await ownRowHold.released;
+      ownRowWrites.push(ctx);
+    }
+    return { value: undefined };
+  });
   on(
     "process.run",
-    () =>
+    (_$, e) =>
       ({
         value: {
           exitCode: colorEntries.length === 0 ? 1 : 0,
-          stdout: colorEntries
-            .map(
-              (agentColor) =>
-                `{"type":"agent-color","agentColor":"${agentColor}","sessionId":"s"}\n`,
-            )
-            .join(""),
+          stdout:
+            options.ownPid !== undefined && e.argv[0] === "sh"
+              ? `${options.ownPid}\n`
+              : colorEntries
+                  .map(
+                    (agentColor) =>
+                      `{"type":"agent-color","agentColor":"${agentColor}","sessionId":"s"}\n`,
+                  )
+                  .join(""),
           stderr: "",
         },
       }) as never,
   );
   return {
     clock,
-    settle: () => clock.settle(),
+    settle: async () => {
+      await clock.settle();
+      for (let turn = 0; turn < MICROTASK_TURNS; turn++) await Promise.resolve();
+      await clock.settle();
+    },
     setProgress: (next: Progress) => {
       progress = next;
     },
+    setBreakdownTokens: (tokens: number) => {
+      breakdownTokens = tokens;
+    },
+    holdBreakdown: () => {
+      let release: () => void = () => undefined;
+      heldBreakdown = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+    holdOwnRow: (ctx: number) => {
+      let release: () => void = () => undefined;
+      ownRowHold = {
+        ctx,
+        released: new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      };
+      return release;
+    },
+    setLiveTokens: (tokens: number | undefined) => {
+      liveTokens = tokens;
+    },
+    stored: (key: string) => stored.get(key),
+    ownRowContexts: () => ownRowWrites,
   };
 }
 
@@ -682,12 +1300,26 @@ function measure($: Engine, reading: Reading) {
 }
 
 async function mountBand($: Engine, columns: number) {
-  const band = await $.ui.mount({
+  return (await mountKeptBand($, columns)).drawn();
+}
+
+function countedRedraws(on: On): { count: number } {
+  const redraws = { count: 0 };
+  on("ui.invalidate", () => {
+    redraws.count += 1;
+    return { value: undefined };
+  });
+  return redraws;
+}
+
+async function mountKeptBand($: Engine, columns: number) {
+  return $.ui.mount({
     plugin: "paneline",
     surface: "terminal",
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: 10,
       bodyColumns: columns,
@@ -696,5 +1328,4 @@ async function mountBand($: Engine, columns: number) {
     },
     viewport: { columns, rows: 40 },
   });
-  return band.drawn();
 }

@@ -25,11 +25,19 @@ PALETTE = [
 ]
 CUBE_LEVELS = (0, 95, 135, 175, 215, 255)
 GREY_START = 232
-DEFAULT_FG = "#d4d4d4"
-DEFAULT_BG = "#1a1a1a"
 GRID_GLYPHS = "─│┌┐└┘├┤┬┴┼╌▌▐▛▜▝▘▀█▄▁▂▃▅▆▇▰▱━"
 FIRST_SYMBOL = 0x2300
 ESCAPE = re.compile(r"\x1b\[([0-9;:]*)m|\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+@dataclass(frozen=True)
+class Theme:
+    fg: str
+    bg: str
+
+
+DARK = Theme(fg="#d4d4d4", bg="#1a1a1a")
+LIGHT = Theme(fg="#1a1a1a", bg="#ffffff")
 
 
 @dataclass
@@ -43,8 +51,8 @@ class Pen:
     strike: bool = False
     reverse: bool = False
 
-    def css(self) -> str:
-        fg, bg = (self.bg or DEFAULT_BG, self.fg or DEFAULT_FG) if self.reverse else (self.fg, self.bg)
+    def css(self, theme: Theme) -> str:
+        fg, bg = (self.bg or theme.bg, self.fg or theme.fg) if self.reverse else (self.fg, self.bg)
         rules = [f"color:{fg}" if fg else "", f"background:{bg}" if bg else ""]
         rules += ["font-weight:700" if self.bold else "", "opacity:.6" if self.dim else ""]
         rules += ["font-style:italic" if self.italic else "", "text-decoration:underline" if self.underline else ""]
@@ -99,14 +107,15 @@ def colour_256(number: int) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        sys.exit("usage: shot.py <tmux socket> <output path without extension>")
+    if len(sys.argv) not in (3, 4) or sys.argv[3:] not in ([], ["light"]):
+        sys.exit("usage: shot.py <tmux socket> <output path without extension> [light]")
     socket, out = sys.argv[1], Path(sys.argv[2])
+    theme = LIGHT if sys.argv[3:] else DARK
     out.parent.mkdir(parents=True, exist_ok=True)
     out.with_suffix(".txt").write_text(capture(socket, coloured=False))
     ansi = capture(socket, coloured=True)
     out.with_suffix(".ansi").write_text(ansi)
-    render(ansi, out.with_suffix(".png"))
+    render(ansi, out.with_suffix(".png"), theme)
     print(out.with_suffix(".png"))
     return 0
 
@@ -117,16 +126,16 @@ def capture(socket: str, coloured: bool) -> str:
     return subprocess.run(command, capture_output=True, text=True, check=True).stdout
 
 
-def render(ansi: str, png: Path) -> None:
+def render(ansi: str, png: Path, theme: Theme) -> None:
     pen = Pen()
-    rows = [cells_of(line, pen) for line in ansi.rstrip("\n").split("\n")]
+    rows = [cells_of(line, pen, theme) for line in ansi.rstrip("\n").split("\n")]
     columns = max((len(row) for row in rows), default=1)
     width = int(CELL_PX * columns) + 2 * PAD_X_PX
     height = LINE_PX * len(rows) + 2 * PAD_Y_PX
     body = "\n".join(row_html(row) for row in rows)
     page = (
-        f"<!doctype html><meta charset=utf-8><style>html,body{{margin:0;background:{DEFAULT_BG}}}"
-        f"pre{{margin:0;padding:{PAD_Y_PX}px {PAD_X_PX}px;color:{DEFAULT_FG};"
+        f"<!doctype html><meta charset=utf-8><style>html,body{{margin:0;background:{theme.bg}}}"
+        f"pre{{margin:0;padding:{PAD_Y_PX}px {PAD_X_PX}px;color:{theme.fg};"
         f"font:{FONT_PX}px/{LINE_PX}px Menlo,'SF Mono',Monaco,'Apple Symbols',monospace;font-variant-ligatures:none}}"
         f"span{{display:inline-block;vertical-align:top;white-space:pre;height:{LINE_PX}px}}</style><pre>{body}</pre>"
     )
@@ -136,15 +145,15 @@ def render(ansi: str, png: Path) -> None:
         screenshot(page_file, png, width, height, Path(scratch) / "profile")
 
 
-def cells_of(line: str, pen: Pen) -> list[tuple[str, str]]:
+def cells_of(line: str, pen: Pen, theme: Theme) -> list[tuple[str, str]]:
     cells: list[tuple[str, str]] = []
     position = 0
     for match in ESCAPE.finditer(line):
-        cells += text_cells(line[position:match.start()], pen.css())
+        cells += text_cells(line[position:match.start()], pen.css(theme))
         position = match.end()
         if match.group(1) is not None:
             pen.apply(match.group(1))
-    return cells + text_cells(line[position:], pen.css())
+    return cells + text_cells(line[position:], pen.css(theme))
 
 
 def text_cells(text: str, css: str) -> list[tuple[str, str]]:

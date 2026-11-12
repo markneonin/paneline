@@ -3,8 +3,6 @@ import { describe, expect, test } from "claude-code/testing";
 import {
   API_KEY,
   CACHE_TITLE,
-  NO_CACHE_DATA,
-  NO_RENT,
   OPUS,
   RENT_TITLE,
   SPLIT_TITLE,
@@ -18,7 +16,6 @@ import {
   ownersOf,
   readFile,
   rentRowsOf,
-  rowTextsOf,
   setSessionCost,
   startFreshSession,
   spendPane,
@@ -42,7 +39,7 @@ describe("spend after compaction and clear", () => {
 
     const pane = await spendPane($);
     const found = await blocks(pane);
-    expect(rowTextsOf(found[RENT_TITLE])).toEqual([NO_RENT]);
+    expect(found[RENT_TITLE]).toBeUndefined();
     expect(totalsOf(await lines(pane))?.usd).toBe("$4.00");
     expect(ownersOf(found[SPLIT_TITLE]).map((owner) => owner.name)).toEqual([
       "main · opus 5.5",
@@ -62,9 +59,8 @@ describe("spend after compaction and clear", () => {
     const found = await blocks(pane);
     expect(hasNoSpendNote(await lines(pane))).toBe(true);
     expect(ownersOf(found[SPLIT_TITLE])).toEqual([]);
-    expect(rowTextsOf(found[CACHE_TITLE])).toEqual([NO_CACHE_DATA]);
-    expect(missesOf(found[CACHE_TITLE])).toEqual([]);
-    expect(rowTextsOf(found[RENT_TITLE])).toEqual([NO_RENT]);
+    expect(found[CACHE_TITLE]).toBeUndefined();
+    expect(found[RENT_TITLE]).toBeUndefined();
   });
 
   test("X3 a compaction a subagent ran on its own leaves the tool-result list unchanged", async ($, on) => {

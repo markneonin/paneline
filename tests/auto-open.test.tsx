@@ -4,6 +4,7 @@ import type { Engine } from "claude-code/testing";
 
 const SESSION_START = { cwd: "/work", surface: "terminal", isInteractive: true } as const;
 const AUTO_OPEN_OFF = { options: { autoOpen: false } };
+const PANEL_FILL = "composerSidebarBackground";
 
 describe("auto open", () => {
   test("O1 with the option not set, a new session and a clear open the pane", async ($, on) => {
@@ -15,6 +16,15 @@ describe("auto open", () => {
     await world.settle();
 
     expect(world.opened).toEqual(["session", "session"]);
+  });
+
+  test("O5 the pane a new session opens by itself asks for the panel fill", async ($, on) => {
+    const world = worldOf(on);
+
+    await $.session.start(SESSION_START);
+    await world.settle();
+
+    expect(world.openedWith).toMatchObject([{ id: "session", backgroundColor: PANEL_FILL }]);
   });
 
   test(
@@ -68,10 +78,15 @@ function runPaneline($: Engine) {
   });
 }
 
-function worldOf(on: On): { opened: string[]; settle: () => Promise<void> } {
+function worldOf(on: On): {
+  opened: string[];
+  openedWith: Record<string, unknown>[];
+  settle: () => Promise<void>;
+} {
   const clock = mock.clock(on);
   mock.env(on, { HOME: "/home" });
   const opened: string[] = [];
+  const openedWith: Record<string, unknown>[] = [];
   const stored = new Map<string, unknown>();
   on("config.list", () => ({ value: [{ key: "theme", value: "dark" }] }) as never);
   on("store.get", (_$, e) => ({ value: stored.get(e.key) }));
@@ -85,7 +100,10 @@ function worldOf(on: On): { opened: string[]; settle: () => Promise<void> } {
   });
   on("store.keys", () => ({ value: [...stored.keys()] }));
   on("session.id", () => ({ value: "s1" }));
+  on("session.repo", () => ({ value: null }));
+  on("session.root", () => ({ value: "/work" }));
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
@@ -94,11 +112,14 @@ function worldOf(on: On): { opened: string[]; settle: () => Promise<void> } {
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("ui.open", (_$, e) => {
     opened.push(e.id);
+    openedWith.push({ ...e });
     return { value: { isPlaced: true } };
   });
   on("command.register", () => ({ value: {} }) as never);
   on("agent.list", () => ({ value: [] }));
   on("classic.SessionStart", () => ({}));
+  on("fs.write", () => ({ value: undefined }));
+  on("fs.list", () => ({ value: [] }));
   on("process.run", () => ({ value: { exitCode: 1, stdout: "", stderr: "" } }) as never);
-  return { opened, settle: () => clock.settle() };
+  return { opened, openedWith, settle: () => clock.settle() };
 }

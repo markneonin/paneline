@@ -3,7 +3,6 @@ import { describe, expect, test } from "claude-code/testing";
 import {
   API_KEY,
   CACHE_TITLE,
-  NO_CACHE_DATA,
   OPUS,
   OTHER_SESSION_ID,
   SESSION_ID,
@@ -11,12 +10,12 @@ import {
   SUBSCRIPTION,
   agentRequest,
   blocks,
-  cacheSummaryOf,
   clearSession,
+  lines,
   mainTurn,
+  missCaptionOf,
   missesOf,
   reloadPlugin,
-  rowTextsOf,
   setSessionCost,
   spawnAgent,
   spendPane,
@@ -49,8 +48,10 @@ describe("spend cache misses across a plugin reload", () => {
     await reloadPlugin($, world);
     await wakeUpTurn($, world, { write: CONTEXT });
 
-    const block = await cacheIn(await spendPane($));
-    expect(cacheSummaryOf(block)).toEqual({ misses: "1 miss", lost: "~$0.84" });
+    await setSessionCost($, world, FOUR_DOLLARS);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "1 miss", lost: "~$0.84" });
     expect(withoutTime(missesOf(block))).toEqual([
       { cause: "after 72m idle", tokens: "108.3k", dollars: "~$0.84" },
     ]);
@@ -75,8 +76,10 @@ describe("spend cache misses across a plugin reload", () => {
       idleMinutes: IDLE_MINUTES,
     });
 
-    const block = await cacheIn(await spendPane($));
-    expect(cacheSummaryOf(block)).toEqual({ misses: "1 miss", lost: "~$0.14" });
+    await setSessionCost($, world, FOUR_DOLLARS);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "1 miss", lost: "~$0.14" });
     expect(withoutTime(missesOf(block))).toEqual([
       { cause: "after 72m idle", tokens: "60k", dollars: "~$0.14" },
     ]);
@@ -91,8 +94,10 @@ describe("spend cache misses across a plugin reload", () => {
     await reloadPlugin($, world);
     await wakeUpTurn($, world, { write: CONTEXT });
 
-    const block = await cacheIn(await spendPane($));
-    expect(cacheSummaryOf(block)).toEqual({ misses: "1 miss", lost: "~$0.84" });
+    await setSessionCost($, world, FOUR_DOLLARS);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "1 miss", lost: "~$0.84" });
     expect(withoutTime(missesOf(block))).toEqual([
       { cause: "after 72m idle", tokens: "108.3k", dollars: "~$0.84" },
     ]);
@@ -118,8 +123,10 @@ describe("spend cache misses across a plugin reload", () => {
       idleMinutes: IDLE_MINUTES,
     });
 
-    const block = await cacheIn(await spendPane($));
-    expect(cacheSummaryOf(block)).toEqual({ misses: "1 miss", lost: "~$0.14" });
+    await setSessionCost($, world, FOUR_DOLLARS);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "1 miss", lost: "~$0.14" });
     expect(withoutTime(missesOf(block))).toEqual([
       { cause: "after 72m idle", tokens: "60k", dollars: "~$0.14" },
     ]);
@@ -136,12 +143,14 @@ describe("spend cache misses across a plugin reload", () => {
       write: BELOW_KNOWN_CAUSE_FLOOR,
     });
 
-    const block = await cacheIn(await spendPane($));
-    expect(cacheSummaryOf(block)).toEqual({ misses: "0 misses", lost: "~$0.00" });
+    await setSessionCost($, world, FOUR_DOLLARS);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
+    expect(missCaptionOf(await lines(pane))).toEqual({ misses: "0 misses", lost: "$0.00" });
     expect(missesOf(block)).toEqual([]);
   });
 
-  test("RM6 /clear after a miss that followed a reload brings the summary back to 0 misses and ~$0.00 lost with no miss rows", async ($, on) => {
+  test("RM6 /clear after a miss that followed a reload leaves no Cache misses block and no miss part in the caption", async ($, on) => {
     const world = worldOf(on, SUBSCRIPTION);
     await startFreshSession($, world);
     await firstTurn($, world);
@@ -150,8 +159,10 @@ describe("spend cache misses across a plugin reload", () => {
 
     await clearSession($, world);
 
-    const block = await cacheIn(await spendPane($));
-    expect(rowTextsOf(block)).toEqual([NO_CACHE_DATA]);
+    await setSessionCost($, world, FOUR_DOLLARS);
+    const pane = await spendPane($);
+    expect(await cacheIn(pane)).toBeUndefined();
+    expect(missCaptionOf(await lines(pane))).toBeUndefined();
   });
 
   test("RM7 with an older plugin's state, a subagent request is still counted and saved: after a reload implementer shows ~$4.00 at 100%", async ($, on) => {

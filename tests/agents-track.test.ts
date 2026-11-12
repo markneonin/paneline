@@ -139,7 +139,6 @@ describe("subagent tracking", () => {
     expect(world.agent(SUBAGENT)).toMatchObject({
       model: "claude-opus-step",
       effort: "high",
-      tokensOut: 50,
       ctxTokens: 1_170,
     });
   });
@@ -235,7 +234,7 @@ describe("what is left out", () => {
     await runStep($, { turnId: "turn-1", index: 0, model: "claude-opus-step", messageCount: 3 });
     await world.clock.advance(FLUSH_MS);
 
-    expect(world.agent("undefined")?.tokensOut).toBe(0);
+    expect(world.agent("undefined")?.ctxTokens).toBe(0);
     expect(world.updatesTo("agents")).toHaveLength(0);
   });
 
@@ -264,6 +263,34 @@ describe("failing tools", () => {
     await world.clock.advance(FLUSH_MS);
 
     expect(world.agent(SUBAGENT)?.running).toEqual([]);
+  });
+});
+
+describe("batches", () => {
+  test("R2 two subagents started in the same main-chat step belong to the same batch", async ($, on) => {
+    const world = engineBeneath(on);
+
+    await mainStep($, 0);
+    await world.spawnSubagent($);
+    await world.spawnSubagent($);
+    await world.clock.advance(FLUSH_MS);
+
+    expect(batchOf(world.agent(SUBAGENT))).toEqual(expect.any(String));
+    expect(batchOf(world.agent(SECOND_SUBAGENT))).toBe(batchOf(world.agent(SUBAGENT)));
+  });
+
+  test("R3 subagents started in different main-chat steps do not belong to the same batch", async ($, on) => {
+    const world = engineBeneath(on);
+
+    await mainStep($, 0);
+    await world.spawnSubagent($);
+    await mainStep($, 1);
+    await world.spawnSubagent($);
+    await world.clock.advance(FLUSH_MS);
+
+    expect(batchOf(world.agent(SUBAGENT))).toEqual(expect.any(String));
+    expect(batchOf(world.agent(SECOND_SUBAGENT))).toEqual(expect.any(String));
+    expect(batchOf(world.agent(SECOND_SUBAGENT))).not.toBe(batchOf(world.agent(SUBAGENT)));
   });
 });
 
@@ -311,6 +338,8 @@ function engineBeneath(on: On): TrackerWorld {
     return { value: undefined };
   });
   on("session.id", () => ({ value: "session-one" }));
+  on("session.repo", () => ({ value: null }));
+  on("session.root", () => ({ value: "/work" }));
   on("session.usage", () => ({
     value: {
       startedAt: START,
@@ -407,6 +436,14 @@ async function runStep(
 
 function stepResult(turnId: string, index: number, usage: TurnUsage | null): TurnStepResult {
   return { turnId, index, answer: "", toolUses: [], stopReason: "end_turn", usage };
+}
+
+function batchOf(node: AgentNode | undefined): unknown {
+  return (node as Record<string, unknown> | undefined)?.batch;
+}
+
+function mainStep($: Engine, index: number): Promise<TurnStepResult> {
+  return runStep($, { turnId: "turn-1", index, model: "claude-opus-step", messageCount: 1 });
 }
 
 function range(count: number): number[] {

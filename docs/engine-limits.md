@@ -40,8 +40,22 @@ The file named by `types` in `plugin.json` may not use `import`, `export ... fro
 
 When a file of the plugin changes while a session runs, the engine reloads the changed modules and fires `session.start` again for them. Hooks on `session.start` must be safe to run twice. Do not put one-time work there.
 
+## The pane open floor
+
+A session-start open has no person behind it, so the engine calls it unasked. It places an unasked open only at 144 columns or more. If `{plugin, id}` is in `pluginPanes.asked` in `~/.claude.json`, the floor drops to 110 columns.
+
+Below the floor the pane waits undrawn: `$.ui.open` returns `{isPlaced:false}` and paneline draws nothing. Nothing fails, so the pane just does not appear.
+
+- A person's close (✕, or Esc at an idle empty prompt) removes the entry. The list is global, so one close in any session removes it for every session on the machine.
+- `/paneline`, or widening the window to 144 columns, places the pane. `/paneline` also writes the entry back.
+- `[-]` on the band is the collapse button of the engine's AbovePrompt band, not a pane toggle.
+
 ## Other facts from the types
 
 - Hooks modules run without DOM or Node. No `require`, no `import()`. Every imported file must be named `.ts`, `.tsx`, `.js`, `.mjs` or similar.
 - Elements (`Box`, `Text`, `Button`) are not globals. Get them from `$.ui.resolve(e)`.
 - Tests run under `claude plugin test .` in the same kind of environment: no file system, no network.
+
+## Code wraps at the edge
+
+The engine's `<Code wrap="wrap">` continues a long line under the gutter by breaking at the last cell, even inside a word or token. We cannot pre-wrap it ourselves: that would cost the follow-on highlighting, and `format: 'diff'` needs whole hunks. This waits for a word-wrap mode in the engine.

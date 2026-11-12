@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "claude-code/testing";
 import type { On, SessionContextBreakdown } from "claude-code";
 import type { Engine, Mounted } from "claude-code/testing";
 
+import { colouredPieces } from "./band-screen";
 import { inkFor } from "../hooks/pane-ink";
 import { categoryColors, palette } from "../hooks/palette";
 import { accentOf } from "../hooks/session-color";
@@ -94,6 +95,19 @@ describe("text carries an explicit theme colour", () => {
 
       const undimmed = collect(tree, "Button").filter((button) => button.props?.dimColor !== true);
       expect(undimmed.filter((button) => !isNameLabel(button))).toEqual([]);
+    });
+  }
+
+  for (const theme of ["dark", "light", "dark-ansi", "light-ansi"]) {
+    test(`TC11 under ${theme} the MCP tab link on the Context tab is drawn like the compact button`, async ($, on) => {
+      paneWorld(on, theme);
+
+      const tree = await paneOnTab($, "Context");
+
+      const compact = buttonLabelled(tree, "compact");
+      const link = buttonLabelled(tree, "MCP tab");
+      expect(link.props?.dimColor).toBe(compact.props?.dimColor);
+      expect(ownTextOf(link)).toEqual(ownTextOf(compact));
     });
   }
 
@@ -211,6 +225,7 @@ describe("text carries an explicit theme colour", () => {
       component: "AbovePrompt",
       props: {
         hasSurvey: false,
+        isCollapsed: false,
         isWorking: false,
         maxRows: 10,
         bodyColumns: COLUMNS,
@@ -369,7 +384,9 @@ function paneWorld(on: On, theme = "dark"): void {
   });
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
+  on("session.messages", () => ({ value: [] }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);
   on("ui.render", { component: "Pane" }, ($, e) => {
@@ -486,6 +503,14 @@ function luminance(rgb: readonly number[]): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+function buttonLabelled(tree: Node, label: string): Node {
+  const button = collect(tree, "Button").find((node) => node.props?.label === label);
+  expect(button, `a button labelled ${label}`).toBeDefined();
+  return button as Node;
+}
+function ownTextOf(button: Node): unknown[] {
+  return colouredPieces(button).filter((piece) => piece.text.trim() !== "");
+}
 function isNameLabel(button: Node): boolean {
   return (button as Node & { hover?: unknown }).hover !== undefined;
 }

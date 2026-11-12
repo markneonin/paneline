@@ -33,6 +33,7 @@ function worldOf(on: On) {
   const clock = mock.clock(on, { now: NOW });
   mock.env(on, { HOME });
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: PROJECT }));
   on("session.usage", () => ({
     value: {
@@ -72,6 +73,7 @@ async function mountBand($: Engine, columns: number) {
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: 10,
       bodyColumns: columns,

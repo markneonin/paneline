@@ -6,7 +6,7 @@ Thank you for helping. This page is short on purpose.
 
 1. Install Node.js and Claude Code.
 2. `npm install`.
-3. Run `claude plugin validate .` once. The engine then writes `.claude-plugin/types/`, which lint and typecheck need.
+3. Start `claude --plugin-dir .` once. The engine then writes `.claude-plugin/types/`, which lint and typecheck need.
 
 ## Try your change
 

@@ -13,7 +13,12 @@ export function childrenOf(node: Node): Node[] {
   );
 }
 
+export function isHidden(node: Node): boolean {
+  return node.type === "Box" && node.props?.display === "none";
+}
+
 export function collect(node: Node, type: string): Node[] {
+  if (isHidden(node)) return [];
   const inner = childrenOf(node).flatMap((child) => collect(child, type));
   return node.type === type ? [node, ...inner] : inner;
 }
@@ -37,10 +42,28 @@ export function panelRows(tree: Node): string[] {
 export function diagramPanels(tree: Node): Node[] {
   return collect(tree, "Box").filter(
     (box) =>
-      box.props?.alignSelf === "flex-start" && box.props.paddingX === 2 && box.props.paddingY === 1,
+      box.props?.alignSelf === "flex-start" &&
+      box.props.paddingX === 2 &&
+      box.props.paddingBottom === 1,
   );
 }
 
 export function diagramRows(tree: Node): string[] {
-  return diagramPanels(tree).flatMap((panel) => childrenOf(panel).map(textOf));
+  return diagramPanels(tree).flatMap((panel) => childrenOf(panel).slice(1).map(textOf));
+}
+
+export function labelledTextOf(node: Node): string {
+  const label = node.props?.label;
+  if (node.type === "Button" && node.children === undefined)
+    return typeof label === "string" ? label : "";
+  return listOf(node.children)
+    .map((child) => (typeof child === "object" ? labelledTextOf(child as Node) : (child as string)))
+    .join("");
+}
+
+export function rowGapOf(tree: Node, text: string): number | undefined {
+  const gap = collect(tree, "Box")
+    .filter((box) => typeof box.props?.columnGap === "number" && textOf(box).includes(text))
+    .at(-1)?.props?.columnGap;
+  return typeof gap === "number" ? gap : undefined;
 }

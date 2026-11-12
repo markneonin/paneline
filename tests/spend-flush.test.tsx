@@ -4,7 +4,6 @@ import {
   API_KEY,
   BACKGROUND_NOTE,
   CACHE_TITLE,
-  NO_RENT,
   OPUS,
   RENT_TITLE,
   SPLIT_TITLE,
@@ -33,16 +32,18 @@ describe("spend tab edges", () => {
     expect(new Set(body.map((line) => line.indent)).size).toBe(1);
   });
 
-  test("F2 a tab with no cache misses and no tool results still starts every line at one left column, the empty-state lines too", async ($, on) => {
+  test("F2 a tab with no cache misses and no tool results leaves both blocks out and still starts every line at one left column", async ($, on) => {
     const world = worldOf(on, API_KEY);
     await startFreshSession($, world);
     await mainTurn($, world, { model: OPUS, tokens: { input: MAIN_OPUS_4_USD } });
     await setSessionCost($, world, 4);
 
-    const shown = await lines(await spendPane($));
+    const pane = await spendPane($);
 
-    const body = bodyOf(shown).filter((line) => line.text !== "");
-    expect(body.map((line) => line.text)).toContain(NO_RENT);
+    const found = await blocks(pane);
+    const body = bodyOf(await lines(pane)).filter((line) => line.text !== "");
+    expect(found[CACHE_TITLE]).toBeUndefined();
+    expect(found[RENT_TITLE]).toBeUndefined();
     expect(new Set(body.map((line) => line.indent)).size).toBe(1);
   });
 
@@ -55,7 +56,7 @@ describe("spend tab edges", () => {
     const found = await blocks(pane);
     const rows = [
       ...(found[SPLIT_TITLE]?.rows ?? []).filter((row) => row.text !== BACKGROUND_NOTE),
-      ...(found[CACHE_TITLE]?.rows ?? []).slice(1),
+      ...(found[CACHE_TITLE]?.rows ?? []),
       ...(found[RENT_TITLE]?.rows ?? []),
     ];
     const edges = rows.map((row) => row.edge);

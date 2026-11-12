@@ -5,8 +5,14 @@ import type { Engine, MockClock } from "claude-code/testing";
 type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] };
 type Write = { key: string; value: unknown };
 type Band = { drawn: () => Promise<unknown> };
-type World = { clock: MockClock; writes: Write[]; band: Band; setBranch: (name: string) => void };
-type Options = { colour?: string; theme?: string };
+type World = {
+  clock: MockClock;
+  writes: Write[];
+  band: Band;
+  setBranch: (name: string) => void;
+  saveEffortOnPick: (model: string, level: string) => void;
+};
+type Options = { colour?: string; theme?: string; savedEffort?: Record<string, string> };
 
 const HOME_DIR = "/Users/dev";
 const WORK_DIR = "/Users/dev/IT";
@@ -21,6 +27,9 @@ const OTHER_BRANCH = "feature/x";
 const HEAD_SHA = "abc123";
 const EFFORT_HIGH = "high";
 const EFFORT_LOW = "low";
+const EFFORT_MAX = "max";
+const EFFORT_BOGUS = "bogus";
+const OTHER_MODEL = "claude-sonnet-5-5";
 const AGENT_ID = "agent-1";
 const ENGINE_ROW = "engine row";
 const COLUMNS = 100;
@@ -28,6 +37,9 @@ const BAND_ROWS = 10;
 const SESSION_START = { cwd: WORK_DIR, surface: "terminal", isInteractive: true } as const;
 const CHIPS_WITH_HIGH = [" opus 5.5 ", " high ", " ~/IT "];
 const CHIPS_WITH_LOW = [" opus 5.5 ", " low ", " ~/IT "];
+const CHIPS_WITH_MAX = [" opus 5.5 ", " max ", " ~/IT "];
+const CHIPS_NO_EFFORT = [" opus 5.5 ", " ~/IT "];
+const CHIPS_SONNET_WITH_LOW = [" sonnet 5.5 ", " low ", " ~/IT "];
 
 describe("trackers write only what changed", () => {
   test("W1 a prompt in a session whose colour is unchanged writes no session colour and no transcript path", async ($, on) => {
@@ -119,6 +131,90 @@ describe("trackers write only what changed", () => {
 
     expect(written).toContainEqual({ key: "gitBranches", value: { [WORK_DIR]: OTHER_BRANCH } });
   });
+
+  test("W9 a new session shows the effort saved for its model before any turn", async ($, on) => {
+    const world = await worldOf($, on, { savedEffort: { [MODEL]: EFFORT_HIGH } });
+    await $.session.start(SESSION_START);
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_WITH_HIGH);
+  });
+
+  test("W10 a new session whose model has no saved effort shows no effort chip", async ($, on) => {
+    const world = await worldOf($, on, { savedEffort: { [OTHER_MODEL]: EFFORT_HIGH } });
+    await $.session.start(SESSION_START);
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_NO_EFFORT);
+  });
+
+  test("W12 /effort high shows high before any turn", async ($, on) => {
+    const world = await worldOf($, on);
+    await $.session.start(SESSION_START);
+
+    await runCommand($, "effort", EFFORT_HIGH);
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_WITH_HIGH);
+  });
+
+  test("W13 /effort max, which the engine saves nowhere, shows max", async ($, on) => {
+    const world = await worldOf($, on, { savedEffort: { [MODEL]: EFFORT_HIGH } });
+    await $.session.start(SESSION_START);
+
+    await runCommand($, "effort", EFFORT_MAX);
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_WITH_MAX);
+  });
+
+  test("W14 the /effort picker shows the effort it saved once the pick is made", async ($, on) => {
+    const world = await worldOf($, on, { savedEffort: { [MODEL]: EFFORT_HIGH } });
+    await $.session.start(SESSION_START);
+    world.saveEffortOnPick(MODEL, EFFORT_LOW);
+
+    await runCommand($, "effort", "");
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_WITH_LOW);
+  });
+
+  test("W15 /effort with a word that is no level shows the saved effort", async ($, on) => {
+    const world = await worldOf($, on, { savedEffort: { [MODEL]: EFFORT_HIGH } });
+    await $.session.start(SESSION_START);
+    await $.classic.Stop(stop(EFFORT_LOW));
+
+    await runCommand($, "effort", EFFORT_BOGUS);
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_WITH_HIGH);
+  });
+
+  test("W16 a model switch shows the effort saved for the new model", async ($, on) => {
+    const world = await worldOf($, on, {
+      savedEffort: { [MODEL]: EFFORT_HIGH, [OTHER_MODEL]: EFFORT_LOW },
+    });
+    await $.session.start(SESSION_START);
+
+    await $.classic.PostModelSwitch({
+      from_model: MODEL,
+      to_model: OTHER_MODEL,
+      requested_model: "sonnet",
+      cache_ttl: "5m",
+    } as never);
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_SONNET_WITH_LOW);
+  });
+
+  test("W17 /model changing only the effort of the same model shows the new saved effort", async ($, on) => {
+    const world = await worldOf($, on, { savedEffort: { [MODEL]: EFFORT_HIGH } });
+    await $.session.start(SESSION_START);
+    world.saveEffortOnPick(MODEL, EFFORT_LOW);
+
+    await runCommand($, "model", "");
+    await world.clock.settle();
+
+    expect(chipTexts(await lastRow(world))).toEqual(CHIPS_WITH_LOW);
+  });
 });
 
 async function worldOf($: Engine, on: On, options: Options = {}): Promise<World> {
@@ -128,6 +224,8 @@ async function worldOf($: Engine, on: On, options: Options = {}): Promise<World>
   const stored = new Map<string, unknown>();
   const theme = options.theme ?? DEFAULT_THEME;
   let branch = MAIN_BRANCH;
+  const savedEffort = { ...options.savedEffort };
+  const pendingPicks: [string, string][] = [];
 
   on("state.set", (_$, e, next) => {
     writes.push({ key: e.key, value: e.value });
@@ -151,8 +249,19 @@ async function worldOf($: Engine, on: On, options: Options = {}): Promise<World>
         },
       }) as never,
   );
+  on("command.run", { command: ["effort", "model"] }, () => {
+    for (const [id, level] of pendingPicks.splice(0)) savedEffort[id] = level;
+    return {};
+  });
   on("session.id", () => ({ value: SESSION_ID }));
   on("session.model", () => ({ value: MODEL }));
+  on("settings.read", () => ({
+    value: {
+      modelSettings: Object.fromEntries(
+        Object.entries(savedEffort).map(([id, effortLevel]) => [id, { effortLevel }]),
+      ),
+    },
+  }));
   on("session.cwd", () => ({ value: WORK_DIR }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
@@ -180,6 +289,7 @@ async function worldOf($: Engine, on: On, options: Options = {}): Promise<World>
     component: "AbovePrompt",
     props: {
       hasSurvey: false,
+      isCollapsed: false,
       isWorking: false,
       maxRows: BAND_ROWS,
       bodyColumns: COLUMNS,
@@ -196,11 +306,16 @@ async function worldOf($: Engine, on: On, options: Options = {}): Promise<World>
     setBranch: (name) => {
       branch = name;
     },
+    saveEffortOnPick: (id, level) => {
+      pendingPicks.push([id, level]);
+    },
   };
 }
 
 function stdoutOf(argv: readonly string[], colour: string | undefined, branch: string): string {
   if (argv[0] !== "git") return colour === undefined ? "" : colourLine(colour);
+  if (argv.includes("--abbrev-ref") && argv.includes("--show-toplevel"))
+    return `${WORK_DIR}\n${HEAD_SHA}\n${branch}`;
   if (argv.includes("--abbrev-ref")) return branch;
   if (argv.includes("--show-toplevel")) {
     return argv.includes("HEAD") ? `${WORK_DIR}\n${HEAD_SHA}` : WORK_DIR;
@@ -228,6 +343,15 @@ async function checkout($: Engine, branch: string): Promise<void> {
     command: `git checkout ${branch}`,
     tool_use_id: branch,
   } as never);
+}
+
+async function runCommand($: Engine, command: string, args: string): Promise<void> {
+  await $.command.run({
+    command,
+    args,
+    origin: { kind: "composer" },
+    presentation: { isFullscreen: false, columns: COLUMNS },
+  });
 }
 
 function stop(level: string): Parameters<Engine["classic"]["Stop"]>[0] {

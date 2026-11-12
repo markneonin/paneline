@@ -1,0 +1,54 @@
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm install --global @anthropic-ai/claude-code@2.1.312
+      - name: Generate plugin types
+        env:
+          TERM: xterm-256color
+        run: |
+          printf '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"%s":{"hasTrustDialogAccepted":true}}}' "$PWD" > "$HOME/.claude.json"
+          python3 - <<'PY'
+          import fcntl, os, pathlib, pty, select, signal, struct, termios, time
+
+          types_ready = [
+              pathlib.Path(".claude-plugin/types/tsconfig.json"),
+              pathlib.Path(".claude-plugin/types/claude-code/index.d.ts"),
+              pathlib.Path(".claude-plugin/types/claude-code-mcp/index.d.ts"),
+              pathlib.Path(".claude-plugin/types/claude-code-tools/index.d.ts"),
+          ]
+          wait_seconds = 90
+
+          pid, terminal = pty.fork()
+          if pid == 0:
+              os.execvp("claude", ["claude", "--plugin-dir", "."])
+          fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+          deadline = time.monotonic() + wait_seconds
+          while not all(path.exists() for path in types_ready) and time.monotonic() < deadline:
+              if select.select([terminal], [], [], 1)[0]:
+                  try:
+                      os.read(terminal, 65536)
+                  except OSError:
+                      break
+          time.sleep(2)
+          os.kill(pid, signal.SIGKILL)
+          missing = [str(path) for path in types_ready if not path.exists()]
+          raise SystemExit(f"types not written: {missing}" if missing else 0)
+          PY
+      - run: npm run check

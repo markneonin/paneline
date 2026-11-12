@@ -12,6 +12,7 @@ Rules:
 - Always use your own tmux socket, `tmux -L <name>`. Never the default socket. Never `tmux kill-server` without `-L <name>`.
 - Load the plugin from the worktree you edit, and from nowhere else. An installed plugin with the same name loads first and warns, so do not rely on one.
 - Do not use `bypassPermissions`.
+- Below 144 columns a cold start may show no pane, because all sessions share one `asked` list (see `docs/engine-limits.md`). A run that needs the pane sends `/paneline` after start, or uses 144 columns or more. A missing pane there is not a product fault and not a reason to retry the start.
 
 Steps:
 

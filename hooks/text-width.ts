@@ -2,6 +2,7 @@ export type Styled<S> = { text: string; style: S };
 
 type Word<S> = { pieces: Styled<S>[]; width: number };
 type Gap<S> = { gap: Styled<S> };
+type LineBreak = { lineBreak: true };
 
 const MIN_PLAIN_WIDTH = 10;
 
@@ -17,6 +18,8 @@ const ELLIPSIS = "…";
 const ELLIPSIS_CELLS = 1;
 
 const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
+
+const AFTER_SLASH = /(?<=[^/]\/)/;
 
 const PICTOGRAPHIC = /^\p{Extended_Pictographic}/u;
 
@@ -34,6 +37,15 @@ export function clipEnd(text: string, cells: number): string {
   return `${takeFromStart(graphemesOf(text), cells - ELLIPSIS_CELLS).join("")}${ELLIPSIS}`;
 }
 
+export function clipEndAtWord(text: string, cells: number): string {
+  const clipped = clipEnd(text, cells);
+  if (clipped === text) return text;
+  const kept = clipped.slice(0, -1);
+  if (/\s/.test(text.charAt(kept.length))) return `${kept.trimEnd()}${ELLIPSIS}`;
+  const edge = kept.search(/\s\S*$/);
+  return edge <= 0 ? clipped : `${kept.slice(0, edge).trimEnd()}${ELLIPSIS}`;
+}
+
 export function clipStart(text: string, cells: number): string {
   if (displayWidth(text) <= cells) return text;
   const kept = takeFromStart(graphemesOf(text).reverse(), cells - ELLIPSIS_CELLS);
@@ -44,7 +56,13 @@ export function wrapPlain(text: string, width: number): string[] {
   return text.split("\n").flatMap((line) => wrapLine(line, Math.max(MIN_PLAIN_WIDTH, width)));
 }
 
-export function wrapRuns<S>(runs: Styled<S>[], width: number): Styled<S>[][] {
+export type WrapOptions = { isLongWordContinuing?: boolean; isBreakingAfterSlash?: boolean };
+
+export function wrapRuns<S>(
+  runs: Styled<S>[],
+  width: number,
+  { isLongWordContinuing = false, isBreakingAfterSlash = false }: WrapOptions = {},
+): Styled<S>[][] {
   const rows: Styled<S>[][] = [];
   let row: Styled<S>[] = [];
   let rowWidth = 0;
@@ -61,17 +79,36 @@ export function wrapRuns<S>(runs: Styled<S>[], width: number): Styled<S>[][] {
     appendPiece(row, grapheme, style);
     rowWidth += columns;
   };
+  const addSegment = (segment: string, style: S) => {
+    const segmentWidth = displayWidth(segment);
+    if (segmentWidth > width || !isBreakingAfterSlash) {
+      for (const grapheme of graphemesOf(segment)) addGrapheme(grapheme, style);
+      return;
+    }
+    if (rowWidth > 0 && rowWidth + segmentWidth > width) endRow();
+    appendPiece(row, segment, style);
+    rowWidth += segmentWidth;
+  };
   for (const part of wordsOf(runs)) {
+    if ("lineBreak" in part) {
+      endRow();
+      continue;
+    }
     if ("gap" in part) {
       if (rowWidth > 0) pendingGap = part.gap;
       continue;
     }
     const gapWidth = pendingGap ? displayWidth(pendingGap.text) : 0;
-    if (rowWidth > 0 && rowWidth + gapWidth + part.width <= width) {
+    const isContinuing = isLongWordContinuing && part.width > width;
+    if (isContinuing && pendingGap) {
+      appendPiece(row, pendingGap.text, pendingGap.style);
+      rowWidth += gapWidth;
+      pendingGap = null;
+    } else if (rowWidth > 0 && rowWidth + gapWidth + part.width <= width) {
       if (pendingGap) appendPiece(row, pendingGap.text, pendingGap.style);
       rowWidth += gapWidth;
       pendingGap = null;
-    } else if (rowWidth > 0) {
+    } else if (rowWidth > 0 && !isContinuing) {
       endRow();
     }
     if (part.width <= width) {
@@ -79,8 +116,10 @@ export function wrapRuns<S>(runs: Styled<S>[], width: number): Styled<S>[][] {
       rowWidth += part.width;
       continue;
     }
-    for (const piece of part.pieces)
-      for (const grapheme of graphemesOf(piece.text)) addGrapheme(grapheme, piece.style);
+    for (const piece of part.pieces) {
+      const segments = isBreakingAfterSlash ? piece.text.split(AFTER_SLASH) : [piece.text];
+      for (const segment of segments) addSegment(segment, piece.style);
+    }
   }
   endRow();
   return rows;
@@ -134,12 +173,17 @@ function breakWord(word: string, width: number): string[] {
   return [...pieces, piece];
 }
 
-function wordsOf<S>(runs: Styled<S>[]): (Word<S> | Gap<S>)[] {
-  const parts: (Word<S> | Gap<S>)[] = [];
+function wordsOf<S>(runs: Styled<S>[]): (Word<S> | Gap<S> | LineBreak)[] {
+  const parts: (Word<S> | Gap<S> | LineBreak)[] = [];
   let word: Word<S> | null = null;
   for (const run of runs) {
-    for (const chunk of run.text.split(/( +)/)) {
+    for (const chunk of run.text.split(/( +|\n)/)) {
       if (chunk === "") continue;
+      if (chunk === "\n") {
+        word = null;
+        parts.push({ lineBreak: true });
+        continue;
+      }
       if (chunk.startsWith(" ")) {
         word = null;
         parts.push({ gap: { text: chunk, style: run.style } });

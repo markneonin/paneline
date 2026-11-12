@@ -1,17 +1,21 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, On, SessionContextBreakdown } from "claude-code";
 
-import { markContextStale, mcpBreakdown } from "./breakdown";
+import {
+  cachedContextBreakdown,
+  loadFullBreakdown,
+  markContextStale,
+  markSummaryStale,
+  mcpBreakdown,
+} from "./breakdown";
 import { singleLine } from "./format";
 import { mcpCommandName } from "./mcp-name";
 import { mcpTab } from "./mcp-draw";
-import { TOOL_USES_KEY } from "./mcp-track";
 import { PANE } from "./pane-tab";
 import { isShownTab, justEntered } from "./shown-tab";
 import { disabledServersOf, projectRootOf, scopeIndexOf } from "./servers";
 import type { McpAction, ScopeIndex } from "./servers";
-import { withoutFolder } from "./use-counts";
-import type { UseCounts } from "./use-counts";
+import { clearUses } from "./store-queue";
 
 export const MCP_TAB = { id: "mcp", label: "MCP" };
 
@@ -20,6 +24,10 @@ const UNSAFE_SERVER_NAME = /[\s\p{Cc}]/u;
 const launchFolderAtom = atom({ plugin: "paneline", key: "launchFolder" } as const, "");
 const toolUsesAtom = atom(
   { plugin: "paneline", key: "toolUses" } as const,
+  {} as Record<string, number>,
+);
+const toolFailuresAtom = atom(
+  { plugin: "paneline", key: "toolFailures" } as const,
   {} as Record<string, number>,
 );
 const mcpSeenAtom = atom({ plugin: "paneline", key: "mcpSeen" } as const, [] as string[]);
@@ -37,7 +45,7 @@ let configured: Promise<McpConfig> | null = null;
 export function registerMcpTab(on: On): void {
   on("session.measure", async ($, e, next) => {
     if (e.changed.length === 0 && isShownTab(MCP_TAB.id)) {
-      markContextStale();
+      markSummaryStale();
       await update($, measureStampAtom, (stamp) => stamp + 1);
     }
     return next(e);
@@ -46,27 +54,33 @@ export function registerMcpTab(on: On): void {
   on("ui.render", { component: "Pane", requestId: PANE }, async ($, e, next) => {
     if (!isShownTab(MCP_TAB.id)) return next(e);
     if (justEntered(MCP_TAB.id)) {
-      markContextStale();
+      markSummaryStale();
       configured = null;
     }
     await read($, measureStampAtom);
     configured ??= loadConfig($);
-    const [loaded, context, seen, queuedServers, openServers, toolUses] = await Promise.all([
-      configured,
-      mcpBreakdown((args) => $.session.usage(args)),
-      read($, mcpSeenAtom),
-      read($, mcpQueuedAtom),
-      read($, mcpOpenAtom),
-      read($, toolUsesAtom),
-    ]);
+    const full = cachedContextBreakdown(e.props.bodyColumns);
+    if (full === null) void loadFullBreakdown($, e.props.bodyColumns);
+    const [loaded, context, seen, queuedServers, openServers, toolUses, toolFailures] =
+      await Promise.all([
+        configured,
+        mcpBreakdown((args) => $.session.usage(args)),
+        read($, mcpSeenAtom),
+        read($, mcpQueuedAtom),
+        read($, mcpOpenAtom),
+        read($, toolUsesAtom),
+        read($, toolFailuresAtom),
+      ]);
     return mcpTab($.ui.resolve(e), {
       context,
+      full,
       width: e.props.bodyColumns,
       disabledServers: [...new Set([...seen, ...loaded.disabled])],
       scopes: loaded.scopes,
       queuedServers,
       openServers: new Set(openServers),
       toolUses,
+      toolFailures,
       clearUses: () => void clearToolUses($),
       toggle: (server) =>
         void update($, mcpOpenAtom, (list) =>
@@ -79,9 +93,9 @@ export function registerMcpTab(on: On): void {
 
 async function clearToolUses($: EngineInterface): Promise<void> {
   const folder = await read($, launchFolderAtom);
-  const stored = ((await $.store.get(TOOL_USES_KEY)) ?? {}) as UseCounts;
-  await $.store.set(TOOL_USES_KEY, withoutFolder(stored, folder));
+  clearUses($, folder, ["tool", "toolFailure"]);
   await update($, toolUsesAtom, () => ({}));
+  await update($, toolFailuresAtom, () => ({}));
 }
 
 async function loadConfig($: EngineInterface): Promise<McpConfig> {

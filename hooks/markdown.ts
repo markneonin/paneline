@@ -32,6 +32,7 @@ export type ListItem = {
   marker: string;
   task: "open" | "done" | null;
   inline: Inline[];
+  blocks: FenceBlock[];
 };
 export type ListBlock = { kind: "list"; items: ListItem[]; raw: string };
 export type TableBlock = {
@@ -60,15 +61,20 @@ export type Block =
   | CodeBlock;
 
 type Unrawed<B> = B extends unknown ? Omit<B, "raw"> : never;
+export type FenceBlock = Unrawed<CodeBlock>;
 type Step = { block: Unrawed<Block> | null; next: number };
 
 const MAX_LINE_LENGTH = 10_000;
+export const CSI_SEQUENCE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
 const FENCE = /^\s*(`{3,}|~{3,})\s*([\w+#.-]*)(.*)$/;
 const FENCE_CLOSE = /^(`{3,}|~{3,})$/;
 const HEADING = /^(#{1,6})\s+(.*)$/;
 const HEADING_CLOSER = /\s+#+\s*$/;
+const SETEXT_UNDERLINE = /^\s*(=|-)\1*\s*$/;
+const SETEXT_TOP_LEVEL = 1;
+const SETEXT_SUB_LEVEL = 2;
 const ALERT = /^\s*>\s*\[!(\w+)\]\s*(.*)$/;
 const QUOTE_MARKERS = /^(?:\s*>\s?)+/;
 const QUOTE_LINE = /^\s*>/;
@@ -82,14 +88,18 @@ const BLOCK_START =
   /^(#{1,6}\s|\s*```|\s*~~~|\s*[-*+]\s|\s*\d+[.)]\s|\s*>|\s*\||\s*([-*_])(?:\s*\2){2,}\s*$)/;
 const ALERT_LEVELS: readonly string[] = ["note", "tip", "important", "warning", "caution"];
 const FILE_LINE = /^\s*(?:\/\/|#|--)\s*([\w./-]+\.\w+)\s*$/;
+const FIRST_LETTER = /\p{L}/u;
+const RIGHT_TO_LEFT_LETTER = /[\p{Script=Hebrew}\p{Script=Arabic}]/u;
 const TITLE = /title=["']?([^"'\s]+)/;
 
-export function parse(text: string): Block[] {
+export type LineBreaks = "joined" | "kept";
+
+export function parse(text: string, lineBreaks: LineBreaks = "joined"): Block[] {
   const lines = cleanText(text).split("\n");
   const blocks: Block[] = [];
   let at = 0;
   while (at < lines.length) {
-    const step = readBlock(lines, at);
+    const step = readBlock(lines, at, lineBreaks);
     if (step.block) blocks.push({ ...step.block, raw: lines.slice(at, step.next).join("\n") });
     at = step.next;
   }
@@ -98,6 +108,7 @@ export function parse(text: string): Block[] {
 
 export function cleanText(text: string): string {
   return text
+    .replace(CSI_SEQUENCE, "")
     .replace(CONTROL_CHARACTERS, "")
     .split("\n")
     .map((line) => (line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) : line))
@@ -108,6 +119,27 @@ export function plainOf(inline: Inline[]): string {
   return runsOf(inline)
     .map((run) => run.text)
     .join("");
+}
+
+export function isRightToLeft(block: Block): boolean {
+  const firstLetter = FIRST_LETTER.exec(judgedText(block))?.[0];
+  return firstLetter !== undefined && RIGHT_TO_LEFT_LETTER.test(firstLetter);
+}
+
+function judgedText(block: Block): string {
+  switch (block.kind) {
+    case "heading":
+    case "paragraph":
+      return plainOf(block.inline);
+    case "quote":
+      return block.lines.map(plainOf).join(" ");
+    case "alert":
+      return [block.title, ...block.lines].map(plainOf).join(" ");
+    case "list":
+      return block.items.map((item) => plainOf(item.inline)).join(" ");
+    default:
+      return "";
+  }
 }
 
 export function runsOf(inline: Inline[]): Run[] {
@@ -315,7 +347,7 @@ function bareUrlAt(text: string, at: number): string | null {
   return whole.replace(URL_TRAILER, "");
 }
 
-function readBlock(lines: string[], at: number): Step {
+function readBlock(lines: string[], at: number, lineBreaks: LineBreaks): Step {
   const line = lines[at] ?? "";
   if (line.trim() === "") return { block: null, next: at + 1 };
   if (THEMATIC_BREAK.test(line)) return { block: { kind: "rule" }, next: at + 1 };
@@ -326,7 +358,8 @@ function readBlock(lines: string[], at: number): Step {
     readQuote(lines, at) ??
     readTable(lines, at) ??
     readList(lines, at) ??
-    readParagraph(lines, at)
+    (lineBreaks === "kept" ? null : readSetext(lines, at)) ??
+    readParagraph(lines, at, lineBreaks)
   );
 }
 
@@ -451,24 +484,54 @@ function alignOf(divider: string): Align {
 
 function readList(lines: string[], at: number): Step | null {
   if (!LIST_ITEM.test(lines[at] ?? "")) return null;
-  const body = takeWhile(
-    lines,
-    at,
-    (line) => LIST_ITEM.test(line) || (LIST_CONTINUATION.test(line) && !FENCE.test(line)),
-  );
   const sources: ListSource[] = [];
-  for (const line of body) {
+  let end = at;
+  while (end < lines.length) {
+    const line = lines[end]!;
     const match = LIST_ITEM.exec(line);
-    if (match)
-      sources.push({ indent: match[1] ?? "", marker: match[2] ?? "-", text: match[3] ?? "" });
-    else sources[sources.length - 1]!.text += ` ${line.trim()}`;
+    const owner = sources[sources.length - 1];
+    if (line.trim() === "" && continuesAfterBlanks(lines, end, owner)) {
+      end = skipBlanks(lines, end);
+      continue;
+    }
+    if (match) {
+      sources.push({
+        indent: match[1] ?? "",
+        marker: match[2] ?? "-",
+        text: match[3] ?? "",
+        blocks: [],
+      });
+    } else if (owner && LIST_CONTINUATION.test(line) && FENCE.test(line)) {
+      const fence = readFence(lines, end)!;
+      owner.blocks.push(fence.block as FenceBlock);
+      end = fence.next;
+      continue;
+    } else if (owner && LIST_CONTINUATION.test(line)) owner.text += ` ${line.trim()}`;
+    else break;
+    end++;
   }
-  return { block: { kind: "list", items: sources.map(listItem) }, next: at + body.length };
+  return { block: { kind: "list", items: sources.map(listItem) }, next: end };
 }
 
-type ListSource = { indent: string; marker: string; text: string };
+function skipBlanks(lines: string[], from: number): number {
+  let end = from;
+  while (lines[end]?.trim() === "") end++;
+  return end;
+}
 
-function listItem({ indent, marker, text }: ListSource): ListItem {
+function continuesAfterBlanks(
+  lines: string[],
+  from: number,
+  owner: ListSource | undefined,
+): boolean {
+  const line = lines[skipBlanks(lines, from)] ?? "";
+  if (LIST_ITEM.test(line)) return owner !== undefined && owner.blocks.length > 0;
+  return LIST_CONTINUATION.test(line) && FENCE.test(line);
+}
+
+type ListSource = { indent: string; marker: string; text: string; blocks: FenceBlock[] };
+
+function listItem({ indent, marker, text, blocks }: ListSource): ListItem {
   const box = TASK_BOX.exec(text);
   const task = box === null ? null : box[1] === " " ? "open" : "done";
   return {
@@ -477,13 +540,38 @@ function listItem({ indent, marker, text }: ListSource): ListItem {
     marker,
     task,
     inline: parseInline(box === null ? text : text.slice(box[0].length)),
+    blocks,
   };
 }
 
-function readParagraph(lines: string[], at: number): Step {
+function readSetext(lines: string[], at: number): Step | null {
+  const text = takeWhile(
+    lines,
+    at,
+    (line) => line.trim() !== "" && !BLOCK_START.test(line) && !SETEXT_UNDERLINE.test(line),
+  );
+  const underline = SETEXT_UNDERLINE.exec(lines[at + text.length] ?? "");
+  if (text.length === 0 || !underline || text.some((line) => line.includes("|"))) return null;
+  return {
+    block: {
+      kind: "heading",
+      level: underline[1] === "=" ? SETEXT_TOP_LEVEL : SETEXT_SUB_LEVEL,
+      inline: parseInline(joinedText(text)),
+    },
+    next: at + text.length + 1,
+  };
+}
+
+const joinedText = (lines: string[], separator = " "): string =>
+  lines.map((line) => line.trim()).join(separator);
+
+function readParagraph(lines: string[], at: number, lineBreaks: LineBreaks): Step {
   const rest = takeWhile(lines, at + 1, (line) => line.trim() !== "" && !BLOCK_START.test(line));
-  const text = [lines[at] ?? "", ...rest].map((line) => line.trim()).join(" ");
-  return { block: { kind: "paragraph", inline: parseInline(text) }, next: at + 1 + rest.length };
+  const text = joinedText([lines[at] ?? "", ...rest], lineBreaks === "kept" ? "\n" : " ");
+  return {
+    block: { kind: "paragraph", inline: parseInline(text) },
+    next: at + 1 + rest.length,
+  };
 }
 
 function takeWhile(lines: string[], from: number, isPart: (line: string) => boolean): string[] {

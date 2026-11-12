@@ -1,13 +1,16 @@
 import type { ElementTable, RenderElement } from "claude-code";
 
-import type { Align, Run, TableBlock } from "./markdown";
-import { inlineElements, withStyle } from "./inline-draw";
+import type { Align, TableBlock } from "./markdown";
+import { inlinePieces, lineOf, plainPiece, withPaths, withStyle } from "./inline-draw";
+import type { OpenPath, PathRun } from "./inline-draw";
 import type { ReplyLook } from "./reply-look";
 import { displayWidth, wrapRuns } from "./text-width";
 
 type Ui = ElementTable;
 
-type Cell = Run[];
+type Cell = PathRun[];
+
+type Flow = { width: number; open: OpenPath | undefined };
 
 const MIN_COLUMN_WIDTH = 3;
 
@@ -19,18 +22,21 @@ export function tableView(
   ui: Ui,
   block: TableBlock,
   look: ReplyLook,
-  width: number,
+  flow: Flow,
   key: string,
 ): RenderElement {
   const { Box } = ui;
+  const { width, open } = flow;
   const columns = block.header.length;
-  const header = block.header.map((inline) => withStyle(inline, { strong: true }));
-  const rows = block.rows.map((row) => block.header.map((_, c) => withStyle(row[c] ?? [], {})));
+  const header = block.header.map((inline) => withPaths(withStyle(inline, { strong: true }), open));
+  const rows = block.rows.map((row) =>
+    block.header.map((_, c) => withPaths(withStyle(row[c] ?? [], {}), open)),
+  );
   const widths = columnWidths([header, ...rows], width);
   const lines =
     widths === null
-      ? recordLines(ui, header, rows, look, width, key)
-      : gridLines(ui, { header, rows, widths, align: block.align, columns }, look, key);
+      ? recordLines(ui, { header, rows }, look, flow, key)
+      : gridLines(ui, { header, rows, widths, align: block.align, columns }, look, flow, key);
   return (
     <Box key={key} flexDirection="column">
       {lines}
@@ -45,16 +51,22 @@ function columnWidths(allRows: Cell[][], width: number): number[] | null {
   );
   const available = width - (columns + 1) - 2 * columns;
   if (sum(natural) <= available) return natural;
-  const minimum = natural.map((n, c) =>
-    Math.min(n, Math.max(MIN_COLUMN_WIDTH, ...allRows.map((row) => longestWord(row[c]!)))),
-  );
-  if (sum(minimum) > available) return null;
+  const minimum = [Infinity, LONGEST_WHOLE_WORD]
+    .map((cap) => minimumWidths(natural, allRows, cap))
+    .find((widths) => sum(widths) <= available);
+  if (minimum === undefined) return null;
   return shareExtra(natural, minimum, available - sum(minimum));
 }
 
-function longestWord(cell: Cell): number {
+function minimumWidths(natural: number[], allRows: Cell[][], cap: number): number[] {
+  return natural.map((n, c) =>
+    Math.min(n, Math.max(MIN_COLUMN_WIDTH, ...allRows.map((row) => longestWord(row[c]!, cap)))),
+  );
+}
+
+function longestWord(cell: Cell, cap: number): number {
   const widest = Math.max(...plainOfRuns(cell).split(/\s+/).map(displayWidth));
-  return Math.min(LONGEST_WHOLE_WORD, widest);
+  return Math.min(cap, widest);
 }
 
 function shareExtra(natural: number[], minimum: number[], extra: number): number[] {
@@ -80,7 +92,13 @@ type Grid = {
   columns: number;
 };
 
-function gridLines(ui: Ui, grid: Grid, look: ReplyLook, key: string): RenderElement[] {
+function gridLines(
+  ui: Ui,
+  grid: Grid,
+  look: ReplyLook,
+  { open }: Flow,
+  key: string,
+): RenderElement[] {
   const { Text } = ui;
   const { header, rows, widths } = grid;
   const wrapped = [header, ...rows].map((row) => row.map((cell, c) => wrapCell(cell, widths[c]!)));
@@ -91,11 +109,11 @@ function gridLines(ui: Ui, grid: Grid, look: ReplyLook, key: string): RenderElem
     </Text>
   );
   const out: RenderElement[] = [border("┌", "─", "┬", "┐", `${key}.top`)];
-  out.push(...rowLines(ui, wrapped[0]!, grid, look, `${key}.h`));
+  out.push(...rowLines(ui, wrapped[0]!, grid, { look, open }, `${key}.h`));
   out.push(border("╞", "═", "╪", "╡", `${key}.head`));
   wrapped.slice(1).forEach((row, r) => {
     if (r > 0 && hasWrappedCell) out.push(border("├", "─", "┼", "┤", `${key}.s${r}`));
-    out.push(...rowLines(ui, row, grid, look, `${key}.r${r}`));
+    out.push(...rowLines(ui, row, grid, { look, open }, `${key}.r${r}`));
   });
   out.push(border("└", "─", "┴", "┘", `${key}.bottom`));
   return out;
@@ -111,28 +129,39 @@ function rowLines(
   ui: Ui,
   cells: Cell[][],
   { widths, align }: Grid,
-  look: ReplyLook,
+  { look, open }: { look: ReplyLook; open: OpenPath | undefined },
   key: string,
 ): RenderElement[] {
   const { Text } = ui;
   const height = Math.max(...cells.map((cell) => cell.length));
-  return Array.from({ length: height }, (_, line) => (
-    <Text key={`${key}.${line}`} color={look.prose} wrap="truncate-end">
-      {cells.map((cell, c) => {
-        const runs = cell[line] ?? [];
-        const [before, after] = paddingOf(widths[c]! - displayWidth(plainOfRuns(runs)), align[c]);
-        return [
-          <Text key={`${c}.l`} color={look.rule}>
+  return Array.from({ length: height }, (_, line) =>
+    lineOf(
+      ui,
+      [
+        ...cells.flatMap((cell, c) => {
+          const runs = cell[line] ?? [];
+          const [before, after] = paddingOf(widths[c]! - displayWidth(plainOfRuns(runs)), align[c]);
+          return [
+            plainPiece(
+              <Text key={`${c}.l`} color={look.rule}>
+                {"│"}
+              </Text>,
+            ),
+            plainPiece(" ".repeat(before + 1)),
+            ...inlinePieces(ui, runs, look, look.prose, { key: `${key}.${line}.${c}`, open }),
+            plainPiece(" ".repeat(after + 1)),
+          ];
+        }),
+        plainPiece(
+          <Text key="end" color={look.rule}>
             {"│"}
           </Text>,
-          " ".repeat(before + 1),
-          ...inlineElements(ui, runs, look, look.prose, `${key}.${line}.${c}`),
-          " ".repeat(after + 1),
-        ];
-      })}
-      <Text color={look.rule}>{"│"}</Text>
-    </Text>
-  ));
+        ),
+      ],
+      `${key}.${line}`,
+      { color: look.prose, wrap: "truncate-end" },
+    ),
+  );
 }
 
 function paddingOf(space: number, align: Align | undefined): [number, number] {
@@ -143,23 +172,26 @@ function paddingOf(space: number, align: Align | undefined): [number, number] {
 
 function recordLines(
   ui: Ui,
-  header: Cell[],
-  rows: Cell[][],
+  { header, rows }: { header: Cell[]; rows: Cell[][] },
   look: ReplyLook,
-  width: number,
+  flow: Flow,
   key: string,
 ): RenderElement[] {
   const { Text } = ui;
-  if (rows.length === 0) return headerRecord(ui, header, look, width, key);
+  const { width, open } = flow;
+  if (rows.length === 0) return headerRecord(ui, header, look, flow, key);
   return rows.flatMap((row, r) => {
     const lines = row.flatMap((cell, c) =>
       wrapRuns([...header[c]!, { text: ": ", style: NO_RUN_STYLE }, ...cell], width),
     );
-    const drawn = lines.map((runs, i) => (
-      <Text key={`${key}.r${r}.${i}`} color={look.prose} wrap="truncate-end">
-        {inlineElements(ui, runs, look, look.prose, `${key}.r${r}.${i}`)}
-      </Text>
-    ));
+    const drawn = lines.map((runs, i) =>
+      lineOf(
+        ui,
+        inlinePieces(ui, runs, look, look.prose, { key: `${key}.r${r}.${i}`, open }),
+        `${key}.r${r}.${i}`,
+        { color: look.prose, wrap: "truncate-end" },
+      ),
+    );
     if (r === rows.length - 1) return drawn;
     return [
       ...drawn,
@@ -174,17 +206,22 @@ function headerRecord(
   ui: Ui,
   header: Cell[],
   look: ReplyLook,
-  width: number,
+  { width, open }: Flow,
   key: string,
 ): RenderElement[] {
-  const { Text } = ui;
   const separator = { text: " │ ", style: NO_RUN_STYLE };
   const runs = header.flatMap((cell, c) => (c === 0 ? cell : [separator, ...cell]));
-  return wrapRuns(runs, width).map((line, i) => (
-    <Text key={`${key}.h${i}`} color={look.prose} wrap="truncate-end">
-      {inlineElements(ui, line, look, look.prose, `${key}.h${i}`)}
-    </Text>
-  ));
+  return wrapRuns(runs, width).map((line, i) =>
+    lineOf(
+      ui,
+      inlinePieces(ui, line, look, look.prose, { key: `${key}.h${i}`, open }),
+      `${key}.h${i}`,
+      {
+        color: look.prose,
+        wrap: "truncate-end",
+      },
+    ),
+  );
 }
 
 function plainOfRuns(runs: Cell): string {

@@ -1,8 +1,11 @@
-import type { ElementTable, RenderElement, UiPressArgument } from "claude-code";
+import { atom, update } from "claude-code";
+import type { ElementTable, EngineInterface, RenderElement, UiPressArgument } from "claude-code";
 
 import type { AgentStatus } from "../types";
 import { palette } from "./palette";
 import { paneInk } from "./pane-ink";
+import { PANE } from "./pane-tab";
+import { clipEnd, displayWidth } from "./text-width";
 
 type Ui = ElementTable;
 
@@ -48,10 +51,10 @@ export const paneHeaderLook = (): HeaderLook => ({
 const STATUS_GLYPH: Record<AgentStatus, string> = {
   running: "●",
   waiting: "●",
-  idle: "●",
+  idle: "○",
   done: "✓",
   failed: "✗",
-  stopped: "●",
+  stopped: "○",
   killed: "✗",
 };
 
@@ -72,6 +75,7 @@ function statusColor(status: AgentStatus): string | undefined {
 const LABEL_SHARE = 3;
 const RIGHT_SHARE = 4;
 const PREFIX_SHARE = 2;
+const CELLS_FOR_ELLIPSIS = 2;
 
 export function statusDot(status: AgentStatus): Part {
   return { text: STATUS_GLYPH[status], color: statusColor(status) };
@@ -169,8 +173,17 @@ function fixedPart({ Box, Text }: Ui, part: Part | Part[], maxCells: number): Re
 }
 
 function clip(text: string, maxCells: number): string {
-  if (text.length <= maxCells) return text;
-  return maxCells <= 1 ? text.slice(0, maxCells) : `${text.slice(0, maxCells - 1)}…`;
+  if (displayWidth(text) <= maxCells) return text;
+  return maxCells < CELLS_FOR_ELLIPSIS ? text.slice(0, maxCells) : clipEnd(text, maxCells);
+}
+
+function filledCells(value: number, max: number, cells: number): number {
+  return max <= 0 ? 0 : Math.max(0, Math.min(cells, Math.round((value / max) * cells)));
+}
+
+export function barText(value: number, max: number, cells: number): string {
+  const filled = filledCells(value, max, cells);
+  return "▰".repeat(filled) + "▱".repeat(cells - filled);
 }
 
 export function bar(
@@ -180,7 +193,7 @@ export function bar(
   cells: number,
   color: string | undefined,
 ): RenderElement {
-  const filled = max <= 0 ? 0 : Math.max(0, Math.min(cells, Math.round((value / max) * cells)));
+  const filled = filledCells(value, max, cells);
   return (
     <Text wrap="truncate-end">
       <Text color={color} wrap="truncate-end">
@@ -193,17 +206,34 @@ export function bar(
   );
 }
 
-export function header(ui: Ui, label: string, look: HeaderLook, width: number): RenderElement {
+export function stampText(ui: Ui, text: string): RenderElement {
   const { Text } = ui;
+  return (
+    <Text color={paneInk().muted} dimColor wrap="truncate-end">
+      {text}
+    </Text>
+  );
+}
+
+export function header(
+  ui: Ui,
+  label: string,
+  look: HeaderLook,
+  width: number,
+  stamp = "",
+): RenderElement {
+  const { Text } = ui;
+  const stampCells = stamp === "" ? 0 : stamp.length + 1;
   return (
     <Text wrap="truncate-end">
       <Text weight="semibold" color={look.color} wrap="truncate-end">
         {label}
       </Text>
+      {stamp === "" ? null : stampText(ui, ` ${stamp}`)}
       <Text
         color={look.ruleColor}
         wrap="truncate-end"
-      >{` ${look.ruleChar.repeat(Math.max(0, width - label.length - 1))}`}</Text>
+      >{` ${look.ruleChar.repeat(Math.max(0, width - label.length - 1 - stampCells))}`}</Text>
     </Text>
   );
 }
@@ -223,26 +253,97 @@ export function button({ Box, Button, Text }: Ui, spec: ButtonSpec): RenderEleme
   );
 }
 
-const HOVER_SCOPE_CELLS = 64;
+export const HOVER_SCOPE_CELLS = 64;
 
 export function isLightTheme(theme: string): boolean {
   return theme.startsWith("light");
 }
 
-export function labelButton({ Button }: Ui, spec: ButtonSpec): RenderElement {
+export function labelButton({ Button, Text }: Ui, spec: ButtonSpec): RenderElement {
+  const ink = paneInk();
   return (
     <Button
       key={spec.key}
       label={spec.label}
       plain
       dimColor={false}
-      hover={{
-        color: paneInk().text ?? paneInk().section,
-        scope: spec.key.slice(0, HOVER_SCOPE_CELLS),
-      }}
+      hover={{ color: ink.text ?? ink.section, scope: spec.key.slice(0, HOVER_SCOPE_CELLS) }}
       onPress={spec.onPress}
+    >
+      <Text color={ink.text} wrap="truncate-end">
+        {spec.label}
+      </Text>
+    </Button>
+  );
+}
+
+type FilterSpec = {
+  value: string;
+  onInput: (text: string) => void;
+  onFocus: () => void;
+};
+
+export const FILTER_KEY = "filter";
+
+const bodyOffsetAtom = atom({ plugin: "paneline", key: "bodyOffset" } as const, 0);
+
+export async function focusFilter($: EngineInterface): Promise<void> {
+  await update($, bodyOffsetAtom, () => 0);
+  await $.ui.open({ id: PANE, title: "Session", closeOnEscape: true, focus: true });
+  await $.ui.focus({ requestId: PANE, key: FILTER_KEY }).catch(() => undefined);
+}
+
+const FILTER_OPEN_KEY = "filter-open";
+const FILTER_HINT_KEY = "filter-hint";
+
+export function filterInput(ui: Ui, value: string, onInput: (text: string) => void): RenderElement {
+  const { Input } = ui as ElementTable<"terminal">;
+  return (
+    <Input
+      key={FILTER_KEY}
+      placeholder="type to narrow"
+      submitLabel={value ? "clear" : ""}
+      value={value}
+      onInput={onInput}
+      onSubmit={() => onInput("")}
     />
   );
+}
+
+export function filterRow(ui: Ui, spec: FilterSpec): RenderElement {
+  const { Box, Button, Text } = ui as ElementTable<"terminal">;
+  return (
+    <Box key="filter-row" flexDirection="row" columnGap={1}>
+      <Box flexShrink={0}>
+        <Button
+          key={FILTER_HINT_KEY}
+          plain
+          dimColor={false}
+          hover={{ color: paneInk().text ?? paneInk().section, scope: FILTER_HINT_KEY }}
+          onPress={spec.onFocus}
+        >
+          <Text color={paneInk().text} wrap="truncate-end">
+            f
+          </Text>
+          <Text color={paneInk().muted} wrap="truncate-end">
+            {" "}
+            filter
+          </Text>
+        </Button>
+        <Box display="none">
+          <Button key={FILTER_OPEN_KEY} label="filter" hotkey="f" onPress={spec.onFocus} />
+        </Box>
+      </Box>
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+        {filterInput(ui, spec.value, spec.onInput)}
+      </Box>
+    </Box>
+  );
+}
+
+export function matchesFilter(filter: string, ...texts: string[]): boolean {
+  const needle = filter.toLowerCase();
+  return texts.some((text) => text.toLowerCase().includes(needle));
 }
 
 export function plural(noun: string, count: number): string {

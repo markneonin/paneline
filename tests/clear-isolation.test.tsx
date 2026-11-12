@@ -49,7 +49,7 @@ describe("clear leaves the other tabs alone", () => {
 
     const activityAfter = await tabTexts(pane, "Activity");
     const agentsAfter = await tabTexts(pane, "Agents");
-    expect(activityBefore.some((text) => text.includes("3 tools"))).toBe(true);
+    expect(activityBefore.some((text) => text.includes("4 tools"))).toBe(true);
     expect(activityAfter).toEqual(activityBefore);
     expect(agentsAfter.some((text) => text.includes("alpha"))).toBe(true);
     expect(agentsAfter.some((text) => text.includes("bravo"))).toBe(true);
@@ -87,7 +87,7 @@ describe("clear leaves the other tabs alone", () => {
     const agents = await tabTexts(pane, "Agents");
 
     expect(activity).toContain("no calls yet");
-    expect(files).toContain("No files touched yet.");
+    expect(files).toContain("no files touched yet · edits and reads show here");
     expect(agents.some((text) => text.includes("bravo"))).toBe(false);
   });
 

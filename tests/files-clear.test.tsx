@@ -1,5 +1,7 @@
 import { describe, expect, test } from "claude-code/testing";
 
+import { palette } from "../hooks/palette";
+import { textOf } from "./draw-tree";
 import {
   clearButtonsOf,
   editFile,
@@ -15,7 +17,7 @@ import {
   worldOf,
 } from "./clear-world";
 
-const EMPTY_TEXT = "No files touched yet.";
+const EMPTY_TEXT = "no files touched yet · edits and reads show here";
 const AGENT_EDIT_BATCH_MS = 1_000;
 
 describe("files clear button", () => {
@@ -95,12 +97,13 @@ describe("files clear button", () => {
     await pressClear(pane, world);
 
     await editFile($, world, "/work/after.ts", 2, 0, agent);
+    await editFile($, world, "/work/own.ts", 1, 0);
     await world.clock.advance(AGENT_EDIT_BATCH_MS);
 
     const shown = await texts(pane);
     expect(shown.some((text) => text.includes("before.ts"))).toBe(false);
     expect(shown.find((text) => text.includes("after.ts"))).toMatch(/after\.ts \+2 -0$/);
-    expect(shown).toContain("1 file changed +2 -0");
+    expect(shown).toContain("2 files changed +3 -0");
     expect(shown).toContain("alpha 1 file +2 -0");
   });
 
@@ -116,5 +119,19 @@ describe("files clear button", () => {
     expect(shown.some((text) => text.includes("early.ts"))).toBe(false);
     expect(shown.find((text) => text.includes("late.ts"))).toMatch(/late\.ts \+1 -0$/);
     expect(shown).toContain("1 file changed +1 -0");
+  });
+});
+
+describe("files empty state", () => {
+  test("S4 before any file is touched the Files tab shows one dim line saying no files touched yet and what fills it", async ($, on) => {
+    worldOf(on);
+
+    const pane = await paneOnTab($, "Files");
+
+    const emptyLines = (await lines(pane)).filter((line) => line.text === EMPTY_TEXT);
+    expect(emptyLines).toHaveLength(1);
+    expect(emptyLines[0]?.parts.find((part) => textOf(part) === EMPTY_TEXT)?.props?.color).toBe(
+      palette.muted,
+    );
   });
 });

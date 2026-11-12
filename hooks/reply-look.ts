@@ -34,10 +34,15 @@ export function replyLook(accent: Accent, fills: Fills = themeFills): ReplyLook 
   return looks(`${resolved}|${fills.source}`, () => buildLook(resolved, fills));
 }
 
+export function resolvedAccent(accent: Accent, fills: Fills = themeFills): string {
+  return replyLook(accent, fills).accent;
+}
+
 function buildLook(accent: string, fills: Fills): ReplyLook {
+  const isDefault = accent === ENGINE_DEFAULT_GREY;
   return {
-    accent,
-    strong: accent === ENGINE_DEFAULT_GREY ? palette.userText : accent,
+    accent: isDefault ? (fills.defaultAccent ?? ENGINE_DEFAULT_GREY) : accent,
+    strong: isDefault ? palette.userText : accent,
     text: palette.text,
     prose: fills.prose,
     onBand: fills.onBand,

@@ -2,7 +2,16 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["hooks/vendor/**", "types/**", ".claude-plugin/**", "node_modules/**", "docs/**"] },
+  {
+    ignores: [
+      "hooks/vendor/**",
+      "types/**",
+      ".claude-plugin/**",
+      "node_modules/**",
+      "docs/**",
+      "scripts/**",
+    ],
+  },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

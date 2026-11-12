@@ -1,8 +1,11 @@
 import { palette } from "./palette";
+import { ENGINE_DEFAULT_GREY } from "./session-color";
 import type { ToolKind } from "./tools";
 
 export type PaneInk = {
   fill: string | undefined;
+  tabFill: string;
+  tabText: string;
   text: string | undefined;
   rule: string;
   meterEmpty: string;
@@ -19,6 +22,8 @@ export type PaneInk = {
 
 const themeInk: PaneInk = {
   fill: undefined,
+  tabFill: ENGINE_DEFAULT_GREY,
+  tabText: "clawd_background",
   text: palette.text,
   rule: palette.rule,
   meterEmpty: palette.meterEmpty,
@@ -45,16 +50,20 @@ const lightHues = [
   "ansi256(19)",
   "ansi256(22)",
   "ansi256(130)",
-  "ansi256(90)",
+  "ansi256(100)",
   "ansi256(30)",
-  "ansi256(53)",
+  "ansi256(134)",
+  "ansi256(161)",
+  "ansi256(25)",
 ];
 
 const lightInk: PaneInk = {
   fill: undefined,
+  tabFill: ENGINE_DEFAULT_GREY,
+  tabText: "clawd_background",
   text: palette.text,
   rule: palette.rule,
-  meterEmpty: palette.meterEmpty,
+  meterEmpty: "ansi256(244)",
   section: palette.section,
   muted: palette.muted,
   tool: palette.text,
@@ -65,9 +74,9 @@ const lightInk: PaneInk = {
     Read: "ansi256(19)",
     Edit: "ansi256(22)",
     Bash: "ansi256(130)",
-    Search: "ansi256(90)",
+    Search: "ansi256(97)",
     Web: "ansi256(30)",
-    Agent: "ansi256(53)",
+    Agent: "ansi256(89)",
     Other: palette.muted,
   },
   hues: lightHues,
@@ -75,16 +84,20 @@ const lightInk: PaneInk = {
 };
 
 const lightAnsiHues = [
-  "ansi256(19)",
+  "ansi256(17)",
   "ansi256(22)",
-  "ansi256(58)",
-  "ansi256(90)",
+  "ansi256(94)",
+  "ansi256(93)",
   "ansi256(23)",
   "ansi256(52)",
+  "ansi256(125)",
+  "ansi256(25)",
 ];
 
 const lightAnsiInk: PaneInk = {
   fill: undefined,
+  tabFill: "clawd_background",
+  tabText: "promptBorder",
   text: palette.text,
   rule: palette.rule,
   meterEmpty: palette.meterEmpty,
@@ -93,12 +106,12 @@ const lightAnsiInk: PaneInk = {
   tool: palette.text,
   ok: "ansi256(22)",
   failed: "ansi256(88)",
-  alert: "ansi256(58)",
+  alert: "ansi256(94)",
   mix: {
     Read: "ansi256(19)",
     Edit: "ansi256(22)",
-    Bash: "ansi256(58)",
-    Search: "ansi256(90)",
+    Bash: "ansi256(94)",
+    Search: "ansi256(126)",
     Web: "ansi256(23)",
     Agent: "ansi256(52)",
     Other: palette.text,
@@ -108,21 +121,25 @@ const lightAnsiInk: PaneInk = {
 };
 
 const darkAnsiHues = [
-  "ansi256(159)",
-  "ansi256(157)",
-  "ansi256(227)",
-  "ansi256(224)",
-  "ansi256(229)",
+  "ansi256(17)",
+  "ansi256(49)",
+  "ansi256(51)",
+  "ansi256(82)",
+  "ansi256(193)",
   "ansi256(195)",
+  "ansi256(225)",
+  "ansi256(226)",
 ];
 
 const darkAnsiInk: PaneInk = {
   fill: undefined,
+  tabFill: ENGINE_DEFAULT_GREY,
+  tabText: "clawd_background",
   text: palette.text,
   rule: palette.rule,
   meterEmpty: palette.meterEmpty,
   section: palette.section,
-  muted: palette.text,
+  muted: "ansi256(251)",
   tool: palette.text,
   ok: "ansi256(157)",
   failed: "ansi256(224)",
@@ -130,10 +147,10 @@ const darkAnsiInk: PaneInk = {
   mix: {
     Read: "ansi256(159)",
     Edit: "ansi256(157)",
-    Bash: "ansi256(227)",
+    Bash: "ansi256(226)",
     Search: "ansi256(224)",
-    Web: "ansi256(229)",
-    Agent: "ansi256(195)",
+    Web: "ansi256(118)",
+    Agent: "ansi256(225)",
     Other: palette.text,
   },
   hues: darkAnsiHues,
@@ -147,9 +164,13 @@ const TERMINAL_BLUE = "ansi256(4)";
 const TERMINAL_MAGENTA = "ansi256(5)";
 const TERMINAL_CYAN = "ansi256(6)";
 const TERMINAL_GREY = "ansi256(8)";
+const TERMINAL_BRIGHT_BLUE = "ansi256(12)";
+const TERMINAL_BRIGHT_MAGENTA = "ansi256(13)";
 
 const autoInk: PaneInk = {
   fill: undefined,
+  tabFill: ENGINE_DEFAULT_GREY,
+  tabText: "clawd_background",
   text: undefined,
   rule: TERMINAL_GREY,
   meterEmpty: TERMINAL_GREY,
@@ -175,6 +196,8 @@ const autoInk: PaneInk = {
     TERMINAL_MAGENTA,
     TERMINAL_CYAN,
     TERMINAL_RED,
+    TERMINAL_BRIGHT_BLUE,
+    TERMINAL_BRIGHT_MAGENTA,
   ],
   isRecoloured: true,
 };

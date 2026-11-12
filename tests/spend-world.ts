@@ -1,5 +1,11 @@
 import { expect, mock } from "claude-code/testing";
-import type { On, SessionContextBreakdown, TurnUsage } from "claude-code";
+import type {
+  On,
+  PromptOrigin,
+  SessionContextBreakdown,
+  SessionMessage,
+  TurnUsage,
+} from "claude-code";
 import type { Engine, MockClock, Mounted } from "claude-code/testing";
 
 import { palette } from "../hooks/palette";
@@ -7,6 +13,7 @@ import { collect, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
 import { blocksOf, linesOf } from "./skills-tree";
 import type { Block, Line } from "./skills-tree";
+import { isHeavy } from "./weight";
 
 export type Pane = Mounted<"terminal", "Pane">;
 export type Tokens = { input?: number; output?: number; read?: number; write?: number };
@@ -16,13 +23,22 @@ export type World = {
   clock: MockClock;
   plan: Plan;
   contextTokens: number | undefined;
+  promptAt: number | undefined;
+  costUsd: number | undefined;
   breakdown: SessionContextBreakdown | undefined;
   stepUsage: TurnUsage | null;
   replies: Map<string, ToolReply>;
   spawned: number;
   calls: number;
   session: string;
+  transcriptPath: string | undefined;
+  repoRoot: string | null;
+  compaction: { tokensBefore?: number; tokensAfter?: number; skip?: string };
   isStoreCorruptUntilWritten: boolean;
+  isStoreStrict: boolean;
+  storeSetsInFlight: number;
+  heldStoreWrites: (() => void)[];
+  rejectedStoreKeys: string[];
   store: Map<string, unknown>;
   state: Map<string, { value: unknown; version: number }>;
 };
@@ -31,6 +47,8 @@ export type MainTurn = {
   tokens: Tokens;
   context?: number;
   idleMinutes?: number;
+  durationMs?: number;
+  isStepped?: boolean;
 };
 export type AgentRequest = {
   agentId: string;
@@ -72,33 +90,55 @@ export const SPEND = "Spend";
 export const SPLIT_TITLE = "Where it went";
 export const CACHE_TITLE = "Cache misses";
 export const RENT_TITLE = "Biggest tool results in context";
+export const HISTORY_TITLE = "History · all sessions";
+export const PROJECTS_TITLE = "By project · 30 days";
+export const NO_HISTORY = "no history yet";
 export const HEADINGS = [SPLIT_TITLE, CACHE_TITLE, RENT_TITLE];
-export const HIT_LABEL = "from cache · all agents";
-const TOTAL_LABELS = /^this session from cache(?: · all agents)? tool results$/;
+export const HISTORY_HEADINGS = [HISTORY_TITLE, PROJECTS_TITLE];
+export const HIT_LABEL = "cache, all agents";
+const TOTAL_LABELS = /^this session .+ result tokens$/;
 export const BEFORE_TRACKING = "before tracking";
-export const NO_SPEND = "no spend yet";
+export const NO_SPEND = "no spend this session yet";
 export const NO_RENT = "no tool results in context";
 export const BACKGROUND_NOTE = "agent summaries, compaction, memory";
 export const MS_PER_MINUTE = 60_000;
 export const TURN_MS = 1_000;
 
+const SUMMARY_MESSAGE: SessionMessage = { role: "user", text: "summary", toolUses: [] };
 const START = Date.UTC(2026, 9, 6, 14, 2, 0);
 const FLUSH_MS = 1_000;
+const STORE_LOCK_ERROR = "Lock file is already being held";
 const SETTLE_TICKS = 5;
 const PANE_ROWS = 80;
 const WORK = "/work";
 const SPEND_STATE_PREFIX = "paneline.spend.";
 const TRACKED_USE_KEYS = ["toolUses", "skillUses"];
 const CORRUPT_VALUE = { sessions: "not a list", owners: 7 };
-const TAB_NAMES = ["Activity", "Files", "Agents", "Plan", "Context", "MCP", "Skills", "Spend"];
+const TAB_NAMES = [
+  "Activity",
+  "Files",
+  "Agents",
+  "Plan",
+  "Context",
+  "MCP",
+  "Skills",
+  "Spend",
+  "Setup",
+  "Shells",
+  "History",
+  "Review",
+];
 const NEXT_TAB_LABEL = "›";
 const PREV_TAB_LABEL = "‹";
 const SELECTED_TAB_TEXT = "clawd_background";
-const OWNER_ROW = /^(.+?) +[▰▱█░]+ +(?:(~\$\d+\.\d{2}) +)?(\d+)%$/;
+const OWNER_ROW = /^(.+?)(?: +[▰▱█░]+)? +(?:(~?<?\$\d+\.\d{2}) +)?(<1%|\d+%)$/;
 const MISS_ROW =
-  /^(\d{2}:\d{2}) (after \d+m idle|model switch|after compaction|cache rebuilt) (\d+(?:\.\d)?k?)(?: (~\$\d+\.\d{2}))?$/;
-const CACHE_SUMMARY = /^(\d+ miss(?:es)?) · (~\$\d+\.\d{2}) lost$/;
+  /^(\d{2}:\d{2}) (after \d+m idle|model switch|after compaction|cache rebuilt) (\d+(?:\.\d)?k?)(?: (~?<?\$\d+\.\d{2}))?$/;
+const CACHE_SUMMARY = /^(\d+ miss(?:es)?) · (~?<?\$\d+\.\d{2}) lost$/;
+const MISS_PART = /(\d+ miss(?:es)?) · (~?<?\$\d+\.\d{2}) lost/;
+const WARMTH_ROW = /^cache (?:warm until \d{2}:\d{2}|cold)/;
 const RENT_ROW = /^(\S+)(?: (.*?))? (\d+(?:\.\d)?k?)$/;
+const LEGACY_HISTORY_TITLE = "History";
 const FILLED_CELLS = /[▰█]/g;
 
 export function worldOf(on: On, plan: Plan): World {
@@ -106,13 +146,22 @@ export function worldOf(on: On, plan: Plan): World {
     clock: mock.clock(on, { now: START }),
     plan,
     contextTokens: undefined,
+    promptAt: undefined,
+    costUsd: undefined,
     breakdown: undefined,
     stepUsage: null,
     replies: new Map(),
     spawned: 0,
     calls: 0,
     session: SESSION_ID,
+    transcriptPath: undefined,
+    repoRoot: null,
+    compaction: {},
     isStoreCorruptUntilWritten: false,
+    isStoreStrict: false,
+    storeSetsInFlight: 0,
+    heldStoreWrites: [],
+    rejectedStoreKeys: [],
     store: new Map(),
     state: new Map(),
   };
@@ -120,6 +169,10 @@ export function worldOf(on: On, plan: Plan): World {
   on("config.list", () => ({ value: [{ key: "theme", value: "dark" }] }) as never);
   on("command.register", () => ({ value: {} }) as never);
   on("session.id", () => ({ value: world.session }));
+  on("session.repo", () => ({
+    value: world.repoRoot === null ? null : ({ root: world.repoRoot } as never),
+  }));
+  on("session.root", () => ({ value: WORK }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("store.get", (_$, e) => {
     const isCorrupt =
@@ -128,8 +181,18 @@ export function worldOf(on: On, plan: Plan): World {
       !TRACKED_USE_KEYS.includes(e.key);
     return { value: isCorrupt ? CORRUPT_VALUE : world.store.get(e.key) };
   });
-  on("store.set", (_$, e) => {
-    world.store.set(e.key, JSON.parse(JSON.stringify(e.value)));
+  on("store.set", async (_$, e) => {
+    if (world.isStoreStrict && world.storeSetsInFlight > 0) {
+      world.rejectedStoreKeys.push(e.key);
+      releaseHeldStoreWrites(world);
+      throw new Error(STORE_LOCK_ERROR);
+    }
+    world.storeSetsInFlight += 1;
+    if (world.isStoreStrict)
+      await new Promise<void>((release) => world.heldStoreWrites.push(release));
+    const saved: unknown = JSON.parse(JSON.stringify(e.value));
+    world.store.set(e.key, saved);
+    world.storeSetsInFlight -= 1;
     return { value: undefined };
   });
   on("store.delete", (_$, e) => {
@@ -148,10 +211,24 @@ export function worldOf(on: On, plan: Plan): World {
     return { value: { isSet: true, version } };
   });
   on("classic.SessionStart", () => ({}));
+  on("session.compact", () =>
+    world.compaction.skip === undefined
+      ? {
+          messages: [SUMMARY_MESSAGE],
+          ...(world.compaction.tokensBefore === undefined
+            ? {}
+            : { tokensBefore: world.compaction.tokensBefore }),
+          ...(world.compaction.tokensAfter === undefined
+            ? {}
+            : { tokensAfter: world.compaction.tokensAfter }),
+        }
+      : { skip: world.compaction.skip },
+  );
   on("ui.open", () => ({ value: { isPlaced: true } }));
   on("session.usage", (_$, e) => ({
     value: {
       startedAt: 0,
+      ...(world.costUsd === undefined ? {} : { cost: { usd: world.costUsd } }),
       context: {
         window: 200_000,
         ...(world.contextTokens === undefined ? {} : { tokens: world.contextTokens }),
@@ -164,6 +241,7 @@ export function worldOf(on: On, plan: Plan): World {
   }));
   on("classic.PostModelSwitch", () => ({}));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: WORK }));
   on("agent.list", () => ({ value: [] }));
   on("fs.exists", () => ({ value: true }));
@@ -229,6 +307,7 @@ export function usageOf(model: string, tokens: Tokens): TurnUsage {
 }
 
 export async function setSessionCost($: Engine, world: World, usd: number): Promise<void> {
+  world.costUsd = usd;
   await $.session.measure({
     context: { window: 200_000 },
     rateLimits: [],
@@ -248,17 +327,51 @@ export async function beginSession(
   await world.clock.advance(FLUSH_MS);
 }
 
+export function releaseHeldStoreWrites(world: World): void {
+  world.heldStoreWrites.splice(0).forEach((release) => release());
+}
+
 export function startFreshSession($: Engine, world: World): Promise<void> {
   return setSessionCost($, world, 0);
+}
+
+export function answerPrompts(on: On): void {
+  on("prompt.submit", (_$, e) => ({ text: e.text }));
+  on("fs.read", () => ({ value: "" }));
+  on("fs.write", () => ({ value: undefined }));
+}
+
+export async function submitPrompt(
+  $: Engine,
+  world: World,
+  text: string,
+  origin: PromptOrigin = { kind: "composer" },
+): Promise<void> {
+  world.promptAt = world.clock.now();
+  await ($.prompt.submit as (e: object) => Promise<unknown>)({ text, wait: false, origin });
+  await $.turn.start({ text, turnId: `turn-${text}` });
+}
+
+export async function submitMetaPrompt($: Engine, text: string): Promise<void> {
+  await ($.prompt.submit as (e: object) => Promise<unknown>)({
+    text,
+    wait: false,
+    isMeta: true,
+    origin: { kind: "composer" },
+  });
 }
 
 export async function mainTurn($: Engine, world: World, turn: MainTurn): Promise<number> {
   world.contextTokens = turn.context;
   await world.clock.advance((turn.idleMinutes ?? 0) * MS_PER_MINUTE + TURN_MS);
+  if (world.promptAt !== undefined && turn.durationMs !== undefined) {
+    await world.clock.advance(Math.max(0, world.promptAt + turn.durationMs - world.clock.now()));
+  }
+  if (turn.isStepped !== true) await mainStep($, world, turn);
   const completedAt = world.clock.now();
   await $.turn.complete({
     answer: "",
-    durationMs: TURN_MS,
+    durationMs: turn.durationMs ?? TURN_MS,
     isAborted: false,
     turnId: `turn-${world.clock.now()}`,
     reason: "answer",
@@ -266,6 +379,18 @@ export async function mainTurn($: Engine, world: World, turn: MainTurn): Promise
   } as never);
   await world.clock.advance(FLUSH_MS);
   return completedAt;
+}
+
+export async function mainStep($: Engine, world: World, turn: MainTurn): Promise<void> {
+  world.stepUsage = usageOf(turn.model, turn.tokens);
+  const stream = $.turn.step({
+    turnId: "turn-main",
+    index: 0,
+    model: turn.model,
+    effort: "high",
+    messageCount: 1,
+  } as never);
+  for await (const _chunk of stream) continue;
 }
 
 export async function spawnAgent($: Engine, world: World, type: string): Promise<string> {
@@ -343,9 +468,22 @@ export function readFile(
   });
 }
 
-export async function compact($: Engine, world: World, agentId?: string): Promise<void> {
+export type CompactTrigger = "manual" | "auto" | "plugin" | "precompute";
+
+export async function compact(
+  $: Engine,
+  world: World,
+  agentId?: string,
+  trigger: CompactTrigger = "manual",
+): Promise<void> {
+  await $.session.compact({
+    trigger,
+    messages: [SUMMARY_MESSAGE],
+    ...(agentId === undefined ? {} : { agentId }),
+  });
   await $.classic.SessionStart({
     source: "compact",
+    ...(world.transcriptPath === undefined ? {} : { transcript_path: world.transcriptPath }),
     ...(agentId === undefined ? {} : { agent_id: agentId }),
   } as never);
   await world.clock.advance(FLUSH_MS);
@@ -398,7 +536,7 @@ export async function showTabThroughArrows(pane: Pane, label: string): Promise<v
     const selected = await selectedTabName(pane);
     if (selected === label) return;
     const arrow = arrowToward(label, selected);
-    const button = buttons.find((candidate) => candidate.props.label === arrow);
+    const button = buttons.find((candidate) => String(candidate.props.label).includes(arrow));
     expect(button, `a ${label} tab button or the ${arrow} arrow`).toBeDefined();
     await pane.press({ key: button?.key ?? "" });
     await settle(pane);
@@ -431,7 +569,35 @@ export async function lines(pane: Pane): Promise<Line[]> {
 }
 
 export async function blocks(pane: Pane): Promise<Record<string, Block>> {
-  return blocksOf(await lines(pane), HEADINGS);
+  return blocksOf(await unstampedLines(pane), [...HISTORY_HEADINGS, ...HEADINGS]);
+}
+
+export async function unstampedLines(pane: Pane): Promise<Line[]> {
+  return (await lines(pane)).map(withoutStamp);
+}
+
+function withoutStamp(line: Line): Line {
+  const [label] = line.parts;
+  const name = label === undefined || !isHeavy(label.props) ? "" : textOf(label).trim();
+  if (name === LEGACY_HISTORY_TITLE) return { ...line, text: HISTORY_TITLE };
+  return [...HISTORY_HEADINGS, ...HEADINGS].includes(name) ? { ...line, text: name } : line;
+}
+
+export function stampOf(shown: Line[], title: string): string | undefined {
+  const heading = shown.find((line) => line.text === title || line.text.startsWith(`${title} `));
+  return heading?.text.slice(title.length).trim();
+}
+
+export function warmthLineOf(shown: Line[]): Line | undefined {
+  return shown.find((line) => WARMTH_ROW.test(line.text));
+}
+
+export function missCaptionOf(shown: Line[]): CacheSummary | undefined {
+  for (const line of shown) {
+    const match = MISS_PART.exec(line.text);
+    if (match !== null) return { misses: match[1] ?? "", lost: match[2] ?? "" };
+  }
+  return undefined;
 }
 
 export function totalsOf(shown: Line[]): Totals | undefined {
@@ -459,6 +625,45 @@ export function isAllMuted(line: Line | undefined): boolean {
   return (line?.parts ?? []).every(isMuted);
 }
 
+export type Colour = "text" | "muted" | "other";
+export type Run = [Colour, string];
+
+export function colourOf(part: Node): Colour {
+  const shown = part.type === "Button" ? (collect(part, "Text")[0] ?? part) : part;
+  if (isMuted(shown)) return "muted";
+  return shown.props?.color === palette.text ? "text" : "other";
+}
+
+export function runsOf(line: Line | undefined): Run[] {
+  const runs: Run[] = [];
+  for (const part of line?.parts ?? []) {
+    const colour = colourOf(part);
+    const last = runs.at(-1);
+    if (last?.[0] === colour) last[1] += textOf(part);
+    else runs.push([colour, textOf(part)]);
+  }
+  return runs
+    .map(([colour, text]): Run => [colour, text.replace(/\s+/g, " ").trim()])
+    .filter(([, text]) => text !== "");
+}
+
+export function partOf(line: Line | undefined, text: string): Node | undefined {
+  return (line?.parts ?? []).find((candidate) => textOf(candidate).trim() === text);
+}
+
+export function colourOfText(line: Line | undefined, text: string): Colour | undefined {
+  const part = partOf(line, text);
+  return part === undefined ? undefined : colourOf(part);
+}
+
+export function cellsIn(line: Line | undefined, cell: "▰" | "▱"): number {
+  return (line?.text.split(cell).length ?? 1) - 1;
+}
+
+export function lineStartingWith(shown: Line[], prefix: string): Line | undefined {
+  return shown.find((line) => line.text.startsWith(prefix));
+}
+
 export function mutedPartsText(line: Line | undefined): string {
   return (line?.parts ?? []).filter(isMuted).map(textOf).join("").replace(/\s+/g, " ").trim();
 }
@@ -480,7 +685,7 @@ export function ownersOf(block: Block | undefined): Owner[] {
       {
         name: match[1] ?? "",
         dollars: match[2] ?? null,
-        percent: `${match[3] ?? ""}%`,
+        percent: match[3] ?? "",
         filled: line.text.match(FILLED_CELLS)?.length ?? 0,
       },
     ];
@@ -506,16 +711,6 @@ export function centsOf(owners: Owner[]): number {
 
 export function toCents(dollars: string | null): number {
   return dollars === null ? 0 : Math.round(Number(dollars.replace(/[~$]/g, "")) * 100);
-}
-
-export function cacheSummaryOf(block: Block | undefined): CacheSummary | undefined {
-  for (const line of block?.rows ?? []) {
-    const match = CACHE_SUMMARY.exec(line.text);
-    if (match !== null) {
-      return { misses: match[1] ?? "", lost: match[2] ?? "" };
-    }
-  }
-  return undefined;
 }
 
 export function missesOf(block: Block | undefined): Miss[] {
@@ -551,10 +746,17 @@ export function spacingOf(shown: Line[]): Spacing {
   return {
     gapAboveTop: gapAbove(shown, shown.indexOf(body[0] as Line)),
     blanksBeforeHeadings: HEADINGS.map((title) =>
-      blanksAbove(body.findIndex((line) => line.text === title)),
-    ),
+      body.findIndex((line) => line.text === title || line.text.startsWith(`${title} `)),
+    )
+      .filter((at) => at !== -1)
+      .map(blanksAbove),
     longestBlankRun: Math.max(0, ...body.map((_line, at) => blankRunAt(body, at))),
   };
+}
+
+export function blanksBelowHeading(shown: Line[], title: string): number {
+  const at = shown.findIndex((line) => line.text === title);
+  return at === -1 ? -1 : blankRunAt(shown, at + 1);
 }
 
 export function shapeOf(shown: Line[]): string[] {
@@ -562,11 +764,13 @@ export function shapeOf(shown: Line[]): string[] {
   return bodyOf(shown).map((line) => {
     if (line.text === "") return "blank";
     if (isLabelsLine(line)) return "labels";
-    if (HEADINGS.includes(line.text)) {
+    if ([...HISTORY_HEADINGS, ...HEADINGS].includes(line.text)) {
       block = line.text;
       return `heading ${line.text}`;
     }
     if (block === "") return "totals";
+    if (block === HISTORY_TITLE) return "tiles";
+    if (block === PROJECTS_TITLE) return "project";
     if (block === SPLIT_TITLE) return line.text === BACKGROUND_NOTE ? "note" : "spend";
     if (block === CACHE_TITLE) return CACHE_SUMMARY.test(line.text) ? "summary" : "miss";
     return "tool";
@@ -621,7 +825,11 @@ function gapAbove(shown: Line[], at: number): number {
   return count;
 }
 
-export function openPane($: Engine, columns: number = COLUMNS): Promise<Pane> {
+export function openPane(
+  $: Engine,
+  columns: number = COLUMNS,
+  rows: number = PANE_ROWS,
+): Promise<Pane> {
   return $.ui.mount({
     plugin: "paneline",
     surface: "terminal",
@@ -632,10 +840,10 @@ export function openPane($: Engine, columns: number = COLUMNS): Promise<Pane> {
       isFocused: false,
       bodyColumns: columns,
       placement: "dock",
-      scroll: { offset: 0, bodyRows: PANE_ROWS },
+      scroll: { offset: 0, bodyRows: rows },
       view: {},
     },
-    viewport: { columns, rows: PANE_ROWS },
+    viewport: { columns, rows },
   });
 }
 

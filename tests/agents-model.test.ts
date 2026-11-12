@@ -1,13 +1,14 @@
 import { describe, expect, test } from "claude-code/testing";
 import {
   completed,
+  cutDone,
+  orderedRows,
   pruned,
   reconciled,
   spawned,
   stepped,
   toolEnded,
   toolStarted,
-  visibleRows,
 } from "../hooks/agents-model";
 import type { AgentTree, Usage } from "../hooks/agents-model";
 
@@ -23,8 +24,6 @@ describe("spawning", () => {
       description: "scan repo",
       status: "running",
       startedAt: 5,
-      tokensIn: 0,
-      tokensOut: 0,
       ctxTokens: 0,
       running: [],
     });
@@ -93,7 +92,7 @@ describe("finishing", () => {
   });
 });
 
-describe("steps and tokens", () => {
+describe("steps and context", () => {
   test("A8 a step shows the model and effort the agent runs with", () => {
     const tree = stepped(spawn({}, "A"), "A", {
       model: "claude-opus",
@@ -105,18 +104,18 @@ describe("steps and tokens", () => {
     expect(tree.A?.effort).toBe("high");
   });
 
-  test("A9 over two steps tokens add up while context size shows only the last step", () => {
+  test("A9 over two steps the context size shows only the last step", () => {
     const first = usage({ input: 100, output: 20, cacheRead: 50, cacheCreation: 30 });
     const second = usage({ input: 10, output: 5, cacheRead: 400, cacheCreation: 0 });
 
     const afterFirst = stepped(spawn({}, "A"), "A", { model: "m", usage: first });
     const afterSecond = stepped(afterFirst, "A", { model: "m", usage: second });
 
-    expect(afterFirst.A).toMatchObject({ tokensIn: 130, tokensOut: 20, ctxTokens: 200 });
-    expect(afterSecond.A).toMatchObject({ tokensIn: 140, tokensOut: 25, ctxTokens: 415 });
+    expect(afterFirst.A).toMatchObject({ ctxTokens: 200 });
+    expect(afterSecond.A).toMatchObject({ ctxTokens: 415 });
   });
 
-  test("A10 a step without usage leaves the token numbers as they were", () => {
+  test("A10 a step without usage leaves the context size as it was", () => {
     const counted = stepped(spawn({}, "A"), "A", {
       model: "m",
       usage: usage({ input: 100, output: 20, cacheRead: 50, cacheCreation: 30 }),
@@ -124,7 +123,7 @@ describe("steps and tokens", () => {
 
     const tree = stepped(counted, "A", { model: "m2", usage: NO_USAGE });
 
-    expect(tree.A).toMatchObject({ model: "m2", tokensIn: 130, tokensOut: 20, ctxTokens: 200 });
+    expect(tree.A).toMatchObject({ model: "m2", ctxTokens: 200 });
   });
 });
 
@@ -148,10 +147,10 @@ describe("commands running", () => {
 });
 
 describe("reconciling with the engine list", () => {
-  test("A14 a killed agent in the engine list shows as killed although it looked running", () => {
+  test("A14 a killed agent in the engine list shows as stopped although it looked running", () => {
     const tree = reconciled(spawn({}, "A"), [listed("A", "killed")], 50);
 
-    expect(tree.A?.status).toBe("killed");
+    expect(tree.A?.status).toBe("stopped");
   });
 
   test("A15 waiting and idle in the engine list show as waiting and idle", () => {
@@ -268,7 +267,7 @@ describe("earlier trees", () => {
     expect(after.A?.model).toBe("m2");
     expect(withTool.A?.running).toHaveLength(1);
     expect(ended.A?.status).toBe("done");
-    expect(killed.A?.status).toBe("killed");
+    expect(killed.A?.status).toBe("stopped");
     expect(before).toEqual(snapshot);
   });
 });
@@ -378,7 +377,7 @@ describe("tree rows", () => {
   });
 
   test("A27 an empty tree shows no rows", () => {
-    expect(visibleRows({}, Infinity).rows).toEqual([]);
+    expect(cutDone(orderedRows({}), Infinity).rows).toEqual([]);
   });
 });
 
@@ -422,7 +421,11 @@ function endedFrom(firstEnd: number, count: number): Record<string, number> {
 }
 
 function rowsOf(tree: AgentTree): [string, number, boolean][] {
-  return visibleRows(tree, Infinity).rows.map((row) => [row.node.id, row.depth, row.isLast]);
+  return cutDone(orderedRows(tree), Infinity).rows.map((row) => [
+    row.node.id,
+    row.depth,
+    row.isLast,
+  ]);
 }
 
 function statusesOf(tree: AgentTree): Record<string, string> {

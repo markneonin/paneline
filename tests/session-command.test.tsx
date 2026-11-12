@@ -5,6 +5,7 @@ import type { Engine } from "claude-code/testing";
 const SESSION_START = { cwd: "/work", surface: "terminal", isInteractive: true } as const;
 const FAILURE_PREFIX = "paneline: could not open the pane: ";
 const OPEN_ERROR = "pane host is gone";
+const PANEL_FILL = "composerSidebarBackground";
 
 describe("session command", () => {
   test("C1 a failing pane open answers with the error text instead of falling through", async ($, on) => {
@@ -28,6 +29,15 @@ describe("session command", () => {
     expect(world.logs).toEqual([]);
     expect(world.opened).toEqual(["session"]);
   });
+
+  test("C3 the pane /paneline opens asks for the panel fill, so a narrow inline box is not left without one", async ($, on) => {
+    const world = worldOf(on);
+    await $.session.start(SESSION_START);
+
+    await run($);
+
+    expect(world.openedWith).toMatchObject([{ id: "session", backgroundColor: PANEL_FILL }]);
+  });
 });
 
 function run($: Engine) {
@@ -39,11 +49,22 @@ function run($: Engine) {
   });
 }
 
-function worldOf(on: On): { failOpen: boolean; logs: string[]; opened: string[] } {
+function worldOf(on: On): {
+  failOpen: boolean;
+  logs: string[];
+  opened: string[];
+  openedWith: Record<string, unknown>[];
+} {
   mock.clock(on);
   mock.env(on, { HOME: "/home" });
-  const world = { failOpen: false, logs: [] as string[], opened: [] as string[] };
+  const world = {
+    failOpen: false,
+    logs: [] as string[],
+    opened: [] as string[],
+    openedWith: [] as Record<string, unknown>[],
+  };
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("session.usage", () => ({
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
@@ -53,6 +74,7 @@ function worldOf(on: On): { failOpen: boolean; logs: string[]; opened: string[] 
   on("ui.open", (_$, e) => {
     if (world.failOpen) throw new Error(OPEN_ERROR);
     world.opened.push(e.id);
+    world.openedWith.push({ ...e });
     return { value: { isPlaced: true } };
   });
   on("ui.log", (_$, e) => {

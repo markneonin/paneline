@@ -35,4 +35,8 @@ describe("fitTabs", () => {
   test("T5 the active tab stays visible even when nothing else fits", () => {
     expect(fitTabs(LABELS, 1, 3)).toEqual({ first: 1, last: 1, hasLeft: true, hasRight: true });
   });
+
+  test("T7 a page never overflows because the count in an arrow takes room too", () => {
+    expect(fitTabs(LABELS, 0, 16)).toEqual({ first: 0, last: 0, hasLeft: false, hasRight: true });
+  });
 });

@@ -9,7 +9,8 @@ import {
   agentOwner,
   agentRequest,
   blocks,
-  cacheSummaryOf,
+  lines,
+  missCaptionOf,
   mainTurn,
   missesOf,
   ownersOf,
@@ -31,6 +32,7 @@ const HOUR_PRICED_COST = 3.2;
 const FIVE_MINUTE_PRICED_COST = 2;
 const MIXED_COST = 3;
 const API_COST = 4;
+const SESSION_COST = 1;
 const THIRTY_MINUTES = 30;
 const SIXTY_ONE_MINUTES = 61;
 const SEVEN_MINUTES = 7;
@@ -106,12 +108,14 @@ describe("spend cache write prices by cache lifetime", () => {
       idleMinutes: THIRTY_MINUTES,
     });
 
-    const block = await cacheIn(await spendPane($));
+    await setSessionCost($, world, SESSION_COST);
+    const pane = await spendPane($);
+    const block = await cacheIn(pane);
 
     expect(withoutTime(missesOf(block))).toEqual([
       { cause: "cache rebuilt", tokens: "78k", dollars: "~$0.61" },
     ]);
-    expect(cacheSummaryOf(block)).toMatchObject({ lost: "~$0.61" });
+    expect(missCaptionOf(await lines(pane))).toMatchObject({ lost: "~$0.61" });
   });
 
   test("P7 on a subscription the same rebuild after 61 minutes idle shows after 61m idle, 78k and ~$0.61", async ($, on) => {

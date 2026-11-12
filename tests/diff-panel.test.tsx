@@ -11,6 +11,14 @@ const HOME = "/Users/dev";
 const CWD = "/Users/dev/app";
 const ENGINE_RESULT = "engine drew this result";
 const SESSION_START = { cwd: CWD, surface: "terminal", isInteractive: true } as const;
+const ESC = "\u001b";
+const NUL = "\u0000";
+const CR = "\r";
+const ESC_SYMBOL = "␛";
+const NUL_SYMBOL = "␀";
+const CR_SYMBOL = "␍";
+const RAW_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+const BASH_COMMAND = "npm run build";
 
 type Node = { type: string; props: Record<string, unknown>; children?: unknown };
 type Hunk = {
@@ -127,11 +135,18 @@ describe("diff panels", () => {
     expect(text).toBe(ENGINE_RESULT);
   });
 
-  test("DF7 a Read result is not touched", async ($, on) => {
+  test("DF7 a Read result of a text file shows a titled panel instead of the engine result", async ($, on) => {
     await world($, on);
-    const output = { filePath: `${CWD}/a.ts`, structuredPatch: [] };
+    const output = {
+      type: "text",
+      file: { filePath: `${CWD}/a.ts`, content: "x", numLines: 1, startLine: 1, totalLines: 1 },
+    };
 
-    expect(textOf(await draw($, "Read", output))).toBe(ENGINE_RESULT);
+    const tree = await draw($, "Read", output);
+
+    expect(collect(tree, "Box").some((box) => box.props.borderStyle === "round")).toBe(true);
+    expect(textOf(tree)).toContain("a.ts");
+    expect(textOf(tree)).not.toBe(ENGINE_RESULT);
   });
 
   test("DF8 an Edit with an empty patch shows no changes and no body rows", async ($, on) => {
@@ -297,10 +312,11 @@ describe("diff panels", () => {
     expect(tree.props.borderStyle).toBe("round");
   });
 
-  test("BX1 a Bash result that changed files keeps the engine output and adds one window per file, tagged new, edited and deleted", async ($, on) => {
+  test("BX1 a Bash result that changed files shows its output panel and one window per file, tagged new, edited and deleted, with no engine output", async ($, on) => {
     await world($, on);
     const output = {
       stdout: "merged",
+      stderr: "",
       bashEditDiff: {
         files: [
           { filePath: `${CWD}/a.ts`, hunks: [hunk(1, ["-a", "+b"])] },
@@ -311,27 +327,31 @@ describe("diff panels", () => {
       },
     };
 
-    const tree = await draw($, "Bash", output);
+    const tree = await drawBashCall($, output);
 
     const windows = collect(tree, "Box").filter((box) => box.props.borderStyle === "round");
-    expect(windows).toHaveLength(3);
+    expect(windows).toHaveLength(4);
     const text = textOf(tree);
-    expect(text).toContain(ENGINE_RESULT);
+    expect(text).not.toContain(ENGINE_RESULT);
     expect(text).toContain("edited");
     expect(text).toContain("new");
     expect(text).toContain("deleted");
   });
 
-  test("BX2 a Bash result with no file changes is left to the engine", async ($, on) => {
+  test("BX2 a Bash result with no file changes shows its output in a titled panel", async ($, on) => {
     await world($, on);
 
-    expect(textOf(await draw($, "Bash", { stdout: "ok" }))).toBe(ENGINE_RESULT);
+    const tree = await drawBashCall($, { stdout: "ok", stderr: "", interrupted: false });
+
+    expect(collect(tree, "Box").filter((box) => box.props.borderStyle === "round")).toHaveLength(1);
+    expect(textOf(tree)).not.toBe(ENGINE_RESULT);
   });
 
   test("BX3 more files and a shared repository each add one dim line under the windows", async ($, on) => {
     await world($, on);
     const output = {
       stdout: "",
+      stderr: "",
       bashEditDiff: {
         files: [{ filePath: `${CWD}/a.ts`, hunks: [hunk(1, ["-a", "+b"])] }],
         moreFiles: 4,
@@ -339,7 +359,7 @@ describe("diff panels", () => {
       },
     };
 
-    const tree = await draw($, "Bash", output);
+    const tree = await drawBashCall($, output);
 
     const notes = collect(tree, "Text").filter(
       (node) => (node.props as Record<string, unknown> | undefined)?.dimColor === true,
@@ -367,11 +387,80 @@ describe("diff panels", () => {
 
     expect(count.props.color).toBe(palette.failed);
   });
+
+  test("DF11 a removed line with an escape byte shows it as ␛ and the card draws no raw control character", async ($, on) => {
+    await world($, on);
+    const output = editOutput(`${CWD}/a.ts`, [hunk(1, [`-${ESC}qold`, "+new"])]);
+
+    const tree = await draw($, "Edit", output, false, "df11");
+
+    expect(sourceLines(tree)).toContain(`-${ESC_SYMBOL}qold`);
+    expect(rawControlsIn(tree)).toEqual([]);
+  });
+
+  test("DF12 an added line with a NUL byte shows it as ␀ and the card draws no raw control character", async ($, on) => {
+    await world($, on);
+    const output = editOutput(`${CWD}/a.ts`, [hunk(1, ["-old", `+a${NUL}b`])]);
+
+    const tree = await draw($, "Edit", output, false, "df12");
+
+    expect(sourceLines(tree)).toContain(`+a${NUL_SYMBOL}b`);
+    expect(rawControlsIn(tree)).toEqual([]);
+  });
+
+  test("DF13 an added line with a carriage return in its middle shows it as ␍ and the card draws no raw control character", async ($, on) => {
+    await world($, on);
+    const output = editOutput(`${CWD}/a.ts`, [hunk(1, ["-old", `+left${CR}right`])]);
+
+    const tree = await draw($, "Edit", output, false, "df13");
+
+    expect(sourceLines(tree)).toContain(`+left${CR_SYMBOL}right`);
+    expect(rawControlsIn(tree)).toEqual([]);
+  });
+
+  test("DF14 a changed line of a CRLF file reads as plain text and no ␍ is drawn", async ($, on) => {
+    await world($, on);
+    const output = editOutput(`${CWD}/win.ts`, [hunk(1, ["-old\r", "+changed\r"])]);
+
+    const source = String(codeOf(await draw($, "Edit", output, false, "df14")).props.source);
+
+    expect(source).toContain("+changed");
+    expect(source).not.toContain(CR_SYMBOL);
+  });
+
+  test("DF17 a Read of a file with Windows line ends and a final carriage return keeps its lines exactly as the file holds them", async ($, on) => {
+    await world($, on);
+    const output = {
+      type: "text",
+      file: {
+        filePath: `${CWD}/w.txt`,
+        content: "one\r\ntwo\r",
+        numLines: 2,
+        startLine: 1,
+        totalLines: 2,
+      },
+    };
+
+    const tree = await draw($, "Read", output, false, "df17");
+
+    expect(String(codeOf(tree).props.source)).toBe("one\ntwo");
+  });
+
+  test("DF18 a Write creating a file whose content holds an escape byte shows it as ␛ and the card draws no raw control character", async ($, on) => {
+    await world($, on);
+    const content = `alpha\nx${ESC}q z`;
+
+    const tree = await draw($, "Write", writeCreate(`${CWD}/n.ts`, content), false, "df18");
+
+    expect(sourceLines(tree)).toContain(`+x${ESC_SYMBOL}q z`);
+    expect(rawControlsIn(tree)).toEqual([]);
+  });
 });
 
 async function world($: Engine, on: On): Promise<void> {
   mock.env(on, { HOME });
   on("session.model", () => ({ value: "claude-opus-5-5" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: CWD }));
   on("session.start", (_$, e) => ({ cwd: e.cwd }));
   on("command.register", () => ({ value: {} }) as never);
@@ -398,8 +487,28 @@ async function draw(
     plugin: "paneline",
     surface: "terminal",
     component: "ToolResult",
-    props: { tool_use_id: id, tool, output, isErrored },
+    props: { tool_use_id: id, tool, output, isErrored, isExpanded: true },
     viewport: { columns, rows: 40 },
+  });
+  return (await ui.drawn()) as unknown as Node;
+}
+
+async function drawBashCall($: Engine, output: unknown): Promise<Node> {
+  const ui = await $.ui.mount({
+    plugin: "paneline",
+    surface: "terminal",
+    component: "ToolUse",
+    props: {
+      tool_use_id: "bash-call",
+      tool: "Bash",
+      input: { command: BASH_COMMAND },
+      output,
+      isRunning: false,
+      isErrored: false,
+      isInterrupted: false,
+      isExpanded: true,
+    },
+    viewport: { columns: 80, rows: 40 },
   });
   return (await ui.drawn()) as unknown as Node;
 }
@@ -461,4 +570,19 @@ function textOf(node: Node): string {
   return listOf(node.children)
     .map((child) => (typeof child === "object" ? textOf(child as Node) : (child as string)))
     .join("");
+}
+
+function rawControlsIn(tree: Node): string[] {
+  return stringsIn(tree).flatMap((text) => text.match(RAW_CONTROL) ?? []);
+}
+
+function stringsIn(node: Node): string[] {
+  const props = Object.values(node.props).filter(
+    (value): value is string => typeof value === "string",
+  );
+  const children = listOf(node.children).flatMap((child) => {
+    if (typeof child === "string") return [child];
+    return typeof child === "object" && child !== null ? stringsIn(child as Node) : [];
+  });
+  return [...props, ...children];
 }

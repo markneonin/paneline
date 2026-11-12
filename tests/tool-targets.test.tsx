@@ -28,7 +28,7 @@ describe("control characters in what a tool call names", () => {
     await expectDrawnWithoutControlCharacters(pane);
   });
 
-  test("T2 the running command shown in the Now row is the first line, clean", async ($, on) => {
+  test("T2 the running command shown on the live line is the first line, clean", async ($, on) => {
     const clock = worldOf(on);
     const running = $.tool.call({
       tool: "Bash",
@@ -67,7 +67,7 @@ describe("control characters in what a tool call names", () => {
     const pane = await mountPane($);
     await pressTab(pane, "Agents");
 
-    expect(await texts(pane)).toContain("scan repo");
+    expect((await texts(pane)).some((text) => text.includes("scan repo"))).toBe(true);
     await pressTab(pane, "Activity");
     expect(await texts(pane)).toContain("Task");
     await expectDrawnWithoutControlCharacters(pane);
@@ -110,6 +110,7 @@ function worldOf(on: On, mcpTools: unknown[] = []): MockClock {
     return { value: { startedAt: 0, context, rateLimits: [] } } as never;
   });
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => ({ value: [] }));
   on("agent.spawn", () => ({ model: "sonnet", agentId: "spawned-1" }));

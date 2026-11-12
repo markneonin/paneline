@@ -1,6 +1,7 @@
 import type { ElementTable, RenderElement } from "claude-code";
 
 import { paneInk } from "./pane-ink";
+import { ENGINE_DEFAULT_GREY } from "./session-color";
 
 export type TabEntry = { id: string; label: string };
 
@@ -8,18 +9,23 @@ export const TAB_BAR_ROWS = 2;
 
 const ACTIVE_TAB_TEXT = "clawd_background";
 const TAB_GAP = 1;
-const ARROW_CELLS = 2;
 
 type TabWindow = { first: number; last: number; hasLeft: boolean; hasRight: boolean };
 
 const NO_TABS_WINDOW: TabWindow = { first: 0, last: -1, hasLeft: false, hasRight: false };
 
+const LEFT_ARROW_INDENT = 1;
+const arrowCells = (hidden: number): number =>
+  hidden === 0 ? 0 : 1 + String(hidden).length + TAB_GAP;
+const leftArrowCells = (hidden: number): number =>
+  hidden === 0 ? 0 : LEFT_ARROW_INDENT + arrowCells(hidden);
+
 export function tabPages(labels: string[], width: number): TabWindow[] {
   const cost = (first: number, last: number): number =>
     labels.slice(first, last + 1).reduce((sum, label) => sum + label.length, 0) +
     (last - first) * TAB_GAP +
-    (first > 0 ? ARROW_CELLS : 0) +
-    (last < labels.length - 1 ? ARROW_CELLS : 0);
+    leftArrowCells(first) +
+    arrowCells(labels.length - 1 - last);
   const pages: TabWindow[] = [];
   let first = 0;
   while (first < labels.length) {
@@ -49,10 +55,13 @@ export function tabBar(
   const pages = tabPages(labels, width);
   const view = fitTabs(labels, activeIndex, width);
   const viewIndex = pages.findIndex(({ first }) => first === view.first);
-  const arrow = (key: string, glyph: string, offset: number): RenderElement => (
+  const isDefaultAccent = accent === ENGINE_DEFAULT_GREY;
+  const activeFill = isDefaultAccent ? paneInk().tabFill : accent;
+  const activeText = isDefaultAccent ? paneInk().tabText : ACTIVE_TAB_TEXT;
+  const arrow = (key: string, text: string, offset: number): RenderElement => (
     <Button
       key={key}
-      label={glyph}
+      label={text}
       plain
       dimColor
       onPress={() => {
@@ -63,25 +72,32 @@ export function tabBar(
   );
   return (
     <Box flexDirection="column" width={width}>
-      <Box flexDirection="row" columnGap={TAB_GAP} width={width} height={1} overflow="hidden">
-        {view.hasLeft ? arrow("tab-left", "‹", -1) : null}
+      <Box
+        flexDirection="row"
+        columnGap={TAB_GAP}
+        paddingLeft={view.hasLeft ? LEFT_ARROW_INDENT : 0}
+        width={width}
+        height={1}
+        overflow="hidden"
+      >
+        {view.hasLeft ? arrow("tab-left", `‹${view.first}`, -1) : null}
         {tabs.slice(view.first, view.last + 1).map(({ id, label }) => {
           const key = `tab-${id}`;
           if (id === active) {
             return (
               <Box key={key} flexDirection="row" flexShrink={0}>
-                <Text color={ACTIVE_TAB_TEXT} backgroundColor={accent} wrap="truncate-end">
+                <Text color={activeText} backgroundColor={activeFill} wrap="truncate-end">
                   {" "}
                 </Text>
                 <Text
                   weight="semibold"
-                  color={ACTIVE_TAB_TEXT}
-                  backgroundColor={accent}
+                  color={activeText}
+                  backgroundColor={activeFill}
                   wrap="truncate-end"
                 >
                   {label}
                 </Text>
-                <Text color={ACTIVE_TAB_TEXT} backgroundColor={accent} wrap="truncate-end">
+                <Text color={activeText} backgroundColor={activeFill} wrap="truncate-end">
                   {" "}
                 </Text>
               </Box>
@@ -99,7 +115,7 @@ export function tabBar(
             </Box>
           );
         })}
-        {view.hasRight ? arrow("tab-right", "›", 1) : null}
+        {view.hasRight ? arrow("tab-right", `${tabs.length - 1 - view.last}›`, 1) : null}
       </Box>
       <Box height={1} />
     </Box>

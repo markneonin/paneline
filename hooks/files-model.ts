@@ -1,7 +1,8 @@
-import type { Activity, AgentEdit, AgentTree, GitChange } from "../types";
+import type { Activity, AgentEdit, AgentTree, GitChange, Worktree } from "../types";
 import { memo } from "./memo";
-import { tildePath } from "./paths";
-import { isPathTool } from "./tools";
+import { matchesFilter } from "./pane-kit";
+import { groupLabel, tildePath } from "./paths";
+import { isFailedEdit, isPathTool } from "./tools";
 
 export type FilesSource = {
   activity: Activity[];
@@ -11,11 +12,19 @@ export type FilesSource = {
   gone: Set<string>;
   branches: Record<string, string>;
   home: string;
+  filter: string;
 };
 
 type Author = { kind: "main" } | { kind: "agent"; id: string } | { kind: "git"; label: string };
 
-type Touch = { target: string; added: number; removed: number; isRead: boolean; author: Author };
+type Touch = {
+  id: string;
+  target: string;
+  added: number;
+  removed: number;
+  isRead: boolean;
+  author: Author;
+};
 
 export type AgentTotal = { label: string; files: Set<string>; added: number; removed: number };
 
@@ -60,13 +69,15 @@ function modelKey(view: FilesSource): string {
     [...view.gone],
     view.branches,
     view.home,
+    view.filter,
     [...agentIds].map((id) => labelOf(view.agents, { kind: "agent", id })),
   ]);
 }
 
 function buildModel(view: FilesSource): FilesModel {
   const touches = withGitNumbers(touchesOf(view), view.gitChanges).filter(
-    (one) => !view.gone.has(one.target),
+    (one) =>
+      !view.gone.has(one.target) && matchesFilter(view.filter, tildePath(one.target, view.home)),
   );
   const files = touchedFiles(touches);
   return {
@@ -74,6 +85,17 @@ function buildModel(view: FilesSource): FilesModel {
     rows: fileTreeRows(files, view.home, view.branches),
     totals: authorTotals(touches, (author) => labelOf(view.agents, author)),
   };
+}
+
+export function isStale(worktree: Worktree): boolean {
+  return (
+    worktree.isMerged &&
+    worktree.isClean &&
+    !worktree.isMain &&
+    !worktree.isSession &&
+    !worktree.isDetached &&
+    !worktree.isLocked
+  );
 }
 
 export function unfoldedRows(
@@ -91,22 +113,39 @@ export function unfoldedRows(
   return shown;
 }
 
+export function fileTargetsOf(entry: Activity): string[] {
+  if (entry.files !== undefined) return entry.files.map((file) => file.target);
+  return entry.tool === "Bash" ? [] : [entry.target];
+}
+
 function touchesOf(view: FilesSource): Touch[] {
-  const fromMain = view.activity
-    .filter(isFileTouch)
-    .map((entry) => touchOf(entry, { kind: "main" }));
-  const fromAgents = view.agentEdits
-    .filter(isFileTouch)
-    .map((edit) => touchOf(edit, { kind: "agent", id: edit.agentId }));
-  return [...fromMain, ...fromAgents];
+  const fromMain = view.activity.flatMap((entry) => touchesOfEntry(entry, { kind: "main" }));
+  const fromAgents = view.agentEdits.flatMap((edit) =>
+    touchesOfEntry(edit, { kind: "agent", id: edit.agentId }),
+  );
+  const landed = new Set(
+    view.gitChanges.flatMap((change) =>
+      (change.landedBy ?? []).map((id) => `${id}\0${change.target}`),
+    ),
+  );
+  return [...fromMain, ...fromAgents].filter(
+    (touch) => !landed.has(`${touch.id}\0${touch.target}`),
+  );
+}
+
+function touchesOfEntry(entry: Activity, author: Author): Touch[] {
+  if (entry.files !== undefined)
+    return entry.files.map((file) => ({ ...file, id: entry.id, isRead: false, author }));
+  return isFileTouch(entry) ? [touchOf(entry, author)] : [];
 }
 
 function isFileTouch(entry: Activity): boolean {
-  return isPathTool(entry.tool) && entry.target !== "";
+  return isPathTool(entry.tool) && entry.target !== "" && !isFailedEdit(entry);
 }
 
 function touchOf(entry: Activity, author: Author): Touch {
   return {
+    id: entry.id,
     target: entry.target,
     added: entry.added,
     removed: entry.removed,
@@ -135,17 +174,17 @@ function withGitNumbers(edits: Touch[], changes: GitChange[]): Touch[] {
     if (owner === undefined || entry.added + entry.removed > owner.added + owner.removed)
       owners.set(entry.target, entry);
   }
-  const numbered = edits.map((entry) => {
+  const numbered = edits.flatMap((entry): Touch[] => {
     const change = byTarget.get(entry.target);
-    if (change === undefined || entry.isRead) return entry;
-    return owners.get(entry.target) === entry
-      ? { ...entry, added: change.added, removed: change.removed }
-      : { ...entry, added: 0, removed: 0 };
+    if (change === undefined || entry.isRead) return [entry];
+    if (owners.get(entry.target) !== entry) return [];
+    return [{ ...entry, added: change.added, removed: change.removed }];
   });
   const unowned = changes.filter((change) => !owners.has(change.target));
   return [
     ...numbered,
     ...unowned.map((change): Touch => ({
+      id: change.target,
       target: change.target,
       added: change.added,
       removed: change.removed,
@@ -170,7 +209,7 @@ function touchedFiles(touches: Touch[]): Map<string, TouchedFile> {
 
 function authorTotals(touches: Touch[], label: (author: Author) => string): AgentTotal[] {
   const totals = new Map<string, AgentTotal>();
-  for (const entry of touches.filter((one) => !one.isRead && one.added + one.removed > 0)) {
+  for (const entry of touches.filter((one) => !one.isRead)) {
     const key = authorKey(entry.author);
     const known = totals.get(key) ?? {
       label: label(entry.author),
@@ -244,7 +283,7 @@ function groupRows(
   const header: FileTreeRow = {
     depth: 0,
     isLast: true,
-    name: rootLabel(rootFolders, home),
+    name: groupLabel(`/${rootFolders.join("/")}`, home),
     key,
     branch,
     total: NO_CHANGE,
@@ -258,11 +297,6 @@ function commonFolders(lists: string[][]): string[] {
   const [first = [], ...rest] = lists;
   const length = first.findIndex((part, i) => rest.some((list) => list[i] !== part));
   return first.slice(0, length === -1 ? first.length : length);
-}
-
-function rootLabel(folders: string[], home: string): string {
-  const shown = tildePath(`/${folders.join("/")}`, home);
-  return shown.endsWith("/") ? shown : `${shown}/`;
 }
 
 function buildTree(files: PlacedFile[]): FolderNode {

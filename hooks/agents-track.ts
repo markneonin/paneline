@@ -1,8 +1,8 @@
 import { gitText } from "./git-run";
 import { atom, read, update } from "claude-code";
-import type { EngineInterface, On, Timer } from "claude-code";
+import type { EngineInterface, On, Timer, TurnUsage } from "claude-code";
 
-import type { AgentTree } from "../types";
+import type { AgentTree, SpendState } from "../types";
 import { AGENTS_TAB } from "./agents-tab";
 import {
   completed,
@@ -19,19 +19,21 @@ import { directoryOf } from "./agents-place";
 import { PANE } from "./pane-tab";
 import {
   afterAgentRequest,
+  afterMainResponse,
   BACKGROUND_OWNER,
   emptySpend,
   hasBaseline,
-  SPEND_SESSIONS_KEY,
   withBaseline,
-  withSession,
 } from "./spend-model";
+import { pruneTranscripts, saveSessionSpend } from "./store-queue";
+import { SPEND_TAB } from "./spend-tab";
+import { refreshSpendTotals } from "./spend-track";
 import { forgetShownTab, isShownTab, justEntered } from "./shown-tab";
 import { folderName, isInside } from "./paths";
 import { targetOf } from "./tools";
 
 const FLUSH_DELAY_MS = 1000;
-const POLL_MS = 1000;
+export const POLL_MS = 1000;
 const PRESENT_AGENT_ID = /^(?!undefined$)./;
 
 const agentsAtom = atom({ plugin: "paneline", key: "agents" } as const, {} as AgentTree);
@@ -44,17 +46,30 @@ const agentsTickAtom = atom({ plugin: "paneline", key: "agentsTick" } as const, 
 const spendAtom = atom({ plugin: "paneline", key: "spend" } as const, emptySpend());
 
 type AgentRequest = Parameters<typeof afterAgentRequest>[2];
-type PendingRequest = { owner: string; request: AgentRequest };
 
 let tree: AgentTree = {};
 let written: AgentTree = tree;
-const pendingRequests: PendingRequest[] = [];
+const pendingRequests: AgentRequest[] = [];
 let seeding: Promise<void> | undefined;
 let pendingFlush: Timer | undefined;
 let poller: Timer | undefined;
 let lastUsd: number | null | undefined;
 const places = new Map<string, Place | null>();
 const rootOfAgent = new Map<string, string>();
+const stepOfParent = new Map<string, string>();
+const MAIN_PARENT = "main";
+
+export function agentsStartedSince(at: number): number {
+  return Object.values(tree).filter((node) => node.startedAt >= at).length;
+}
+
+export function trackAgentsClose(on: On): void {
+  on("ui.close", { id: PANE }, async ($, e, next) => {
+    forgetShownTab();
+    stopPolling($);
+    return next(e);
+  });
+}
 
 export function trackAgents(on: On): void {
   on("agent.spawn", async ($, e, next) => {
@@ -62,8 +77,10 @@ export function trackAgents(on: On): void {
     if (spawn.agentId === undefined) return spawn;
     const agentId = spawn.agentId;
     const at = await $.clock.now();
+    const batch = stepOfParent.get(e.parentAgentId ?? MAIN_PARENT);
     await record($, (current) =>
       spawned(current, {
+        ...(batch !== undefined && { batch }),
         id: agentId,
         parentId: e.parentAgentId,
         type: e.subagentType,
@@ -94,11 +111,15 @@ export function trackAgents(on: On): void {
     }
   });
 
-  on("turn.step", { agentId: PRESENT_AGENT_ID }, async function* ($, e, next) {
+  on("turn.step", async function* ($, e, next) {
+    stepOfParent.set(e.agentId ?? MAIN_PARENT, `${e.turnId}:${e.index}`);
     const startedAt = await $.clock.now();
     const step = yield* next(e);
     const agentId = e.agentId;
-    if (agentId === undefined) return step;
+    if (agentId === undefined) {
+      if (step.usage !== null) await bookMainResponse($, step.usage);
+      return step;
+    }
     await record($, (current) =>
       stepped(current, agentId, {
         model: e.model,
@@ -114,7 +135,7 @@ export function trackAgents(on: On): void {
         startedAt,
         endedAt: await $.clock.now(),
       };
-      pendingRequests.push({ owner: tree[agentId]?.type ?? BACKGROUND_OWNER, request });
+      pendingRequests.push(request);
       if (!poller) scheduleFlush($);
     }
     return step;
@@ -134,27 +155,37 @@ export function trackAgents(on: On): void {
     return next(e);
   });
 
-  on("ui.close", { id: PANE }, async ($, e, next) => {
-    forgetShownTab();
-    stopPolling($);
-    return next(e);
-  });
-
   on("session.measure", { changed: ["cost"] }, async ($, e, next) => {
     const usd = e.cost?.usd ?? null;
     if (usd !== lastUsd) {
       lastUsd = usd;
-      await update($, sessionUsdAtom, () => usd);
-      if (usd !== null) await settleBaseline($, usd);
+      const baseline = usd === null ? undefined : await baselineState($, usd);
+      try {
+        if (baseline) await saveSessionSpend($, baseline);
+      } finally {
+        await update($, sessionUsdAtom, () => usd);
+      }
+      if (usd !== null && (isShownTab(SPEND_TAB.id) || isShownTab(AGENTS_TAB.id)))
+        void refreshSpendTotals($);
     }
     return next(e);
   });
+
+  on(
+    "classic.SessionStart",
+    { source: ["startup", "resume", "clear", "fork"] },
+    async ($, e, next) => {
+      if (e.agent_id === undefined) pruneTranscripts($);
+      return next(e);
+    },
+  );
 
   on("classic.SessionStart", { source: "clear" }, async ($, e, next) => {
     pendingRequests.length = 0;
     stopPolling($);
     places.clear();
     rootOfAgent.clear();
+    stepOfParent.clear();
     await record($, () => ({}));
     return next(e);
   });
@@ -272,21 +303,27 @@ function spendWrites($: EngineInterface): Promise<unknown>[] {
   return [writeSpend($, pendingRequests.splice(0))];
 }
 
-async function writeSpend($: EngineInterface, requests: PendingRequest[]): Promise<void> {
+async function bookMainResponse($: EngineInterface, usage: TurnUsage): Promise<void> {
+  const { rateLimits } = await $.session.usage();
+  const fallbackTtl = rateLimits.length > 0 ? "1h" : "5m";
   const state = await update($, spendAtom, (current) =>
-    requests.reduce((acc, { owner, request }) => afterAgentRequest(acc, owner, request), current),
+    afterMainResponse(current, usage, current.mainCacheTtl ?? fallbackTtl),
   );
-  await $.store.set(
-    SPEND_SESSIONS_KEY,
-    withSession(await $.store.get(SPEND_SESSIONS_KEY), await $.session.id(), state),
-  );
+  await saveSessionSpend($, state);
 }
 
-async function settleBaseline($: EngineInterface, usd: number): Promise<void> {
-  if (hasBaseline(await read($, spendAtom))) return;
-  const state = await update($, spendAtom, (current) => withBaseline(current, usd));
-  await $.store.set(
-    SPEND_SESSIONS_KEY,
-    withSession(await $.store.get(SPEND_SESSIONS_KEY), await $.session.id(), state),
+async function writeSpend($: EngineInterface, requests: AgentRequest[]): Promise<void> {
+  const state = await update($, spendAtom, (current) =>
+    requests.reduce(
+      (acc, request) =>
+        afterAgentRequest(acc, tree[request.agentId]?.type ?? BACKGROUND_OWNER, request),
+      current,
+    ),
   );
+  await saveSessionSpend($, state);
+}
+
+async function baselineState($: EngineInterface, usd: number): Promise<SpendState | undefined> {
+  if (hasBaseline(await read($, spendAtom))) return undefined;
+  return update($, spendAtom, (current) => withBaseline(current, usd));
 }

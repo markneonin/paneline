@@ -1,4 +1,4 @@
-import { childrenOf, textOf } from "./draw-tree";
+import { childrenOf, isHidden, textOf } from "./draw-tree";
 import type { Node } from "./draw-tree";
 import { isHeavy } from "./weight";
 
@@ -9,8 +9,12 @@ const RULE_CHARS = /─+/g;
 const INDENT_PROPS = ["marginLeft", "paddingLeft", "marginX", "paddingX"];
 const GLYPHS = ["▸", "▾"];
 const COUNT_SUFFIX = /^\s*(\d+(?: [a-z]+)?)$/;
-const CLEAR_SUFFIX = / clear$/;
-const USE_COUNT = /^(.+?) (\d+ uses?)$/;
+const CLEAR_SUFFIX = / (?:\[ )?clear(?: \])?$/;
+const CLEAR_LABEL = /^\[?\s*clear\s*\]?$/;
+const SCOPE_WORD = / · (?:this project|all projects)/;
+const USE_COUNT = /^(\S+)(?: [\d.]+k? tokens?)? (\d+ uses?)$/;
+const ACTION_LABELS = ["turn off", "turn on"];
+const NEVER_USED_ROW = /^[▸▾] never used\b/;
 
 export function linesOf(tree: Node): Line[] {
   return layout(tree, 0);
@@ -30,6 +34,8 @@ export function blocksOf(lines: Line[], titles: string[]): Record<string, Block>
     if (heading !== null) {
       current = { ...heading, heading: line, rows: [] };
       blocks[heading.title] = current;
+    } else if (NEVER_USED_ROW.test(line.text)) {
+      current = null;
     } else if (current !== null && line.text !== "") current.rows.push(line);
   }
   return blocks;
@@ -48,7 +54,11 @@ export function skillRowTexts(block: Block | undefined): string[] {
 }
 
 export function rowOf(block: Block | undefined, name: string): Line | undefined {
-  return block?.rows.find((line) => GLYPHS.some((glyph) => line.text === `${glyph} ${name}`));
+  return block?.rows.find((line) =>
+    GLYPHS.some(
+      (glyph) => line.text === `${glyph} ${name}` || line.text.startsWith(`${glyph} ${name} `),
+    ),
+  );
 }
 
 export function bareRowOf(block: Block | undefined, name: string): Line | undefined {
@@ -61,7 +71,8 @@ export function descriptionRowsOf(block: Block | undefined, name: string): Line[
   if (start === -1) return [];
   const rest = rows.slice(start + 1);
   const next = rest.findIndex(isSkillRow);
-  return next === -1 ? rest : rest.slice(0, next);
+  const description = next === -1 ? rest : rest.slice(0, next);
+  return description.filter((line) => !ACTION_LABELS.includes(line.text));
 }
 
 export function glyphButtonOf(line: Line | undefined): Node | undefined {
@@ -80,7 +91,9 @@ export function keyOf(node: Node | undefined): string {
 }
 
 export function clearButtonOf(block: Block | undefined): Node | undefined {
-  return block?.heading.parts.find((part) => part.type === "Button" && labelOf(part) === "clear");
+  return block?.heading.parts.find(
+    (part) => part.type === "Button" && CLEAR_LABEL.test(labelOf(part)),
+  );
 }
 
 export function useRowsOf(block: Block | undefined): string[][] {
@@ -97,8 +110,11 @@ export function statsButtonOf(block: Block | undefined): Line | undefined {
 function headingOf(line: Line, titles: string[]): Omit<Block, "heading" | "rows"> | null {
   const isBold = line.parts.some((part) => part.type === "Text" && isHeavy(part.props));
   if (!isBold) return null;
-  const hasClear = line.parts.some((part) => part.type === "Button" && labelOf(part) === "clear");
-  const text = hasClear ? line.text.replace(CLEAR_SUFFIX, "") : line.text;
+  const hasClear = line.parts.some(
+    (part) => part.type === "Button" && CLEAR_LABEL.test(labelOf(part)),
+  );
+  const unlabelled = hasClear ? line.text.replace(CLEAR_SUFFIX, "") : line.text;
+  const text = unlabelled.replace(SCOPE_WORD, "");
   for (const title of titles) {
     if (text === title) return { title, count: null };
     if (!text.startsWith(`${title} `)) continue;
@@ -113,13 +129,24 @@ function labelOf(node: Node): string {
 }
 
 function layout(node: Node, inherited: number): Line[] {
+  if (isHidden(node) || isAbsolute(node)) return [];
   if (node.type === "Text") return splitLines(textOf(node), leavesOf(node), inherited);
   if (node.type === "Button") return splitLines(labelOf(node), [node], inherited);
   const indent = inherited + indentOf(node);
   const children = childrenOf(node);
   if (children.length === 0) return spacerLines(node, indent);
   const columns = children.map((child) => layout(child, indent));
-  return isRow(node) ? mergeRow(columns, gapOf(node), edgeOf(node, indent)) : columns.flat();
+  const lines = isRow(node) ? mergeRow(columns, gapOf(node), edgeOf(node, indent)) : columns.flat();
+  return lines.slice(rowsPulledUp(node));
+}
+
+function isAbsolute(node: Node): boolean {
+  return node.type === "Box" && node.props?.position === "absolute";
+}
+
+function rowsPulledUp(node: Node): number {
+  const margin = node.props?.marginTop;
+  return typeof margin === "number" && margin < 0 ? -margin : 0;
 }
 
 function leavesOf(node: Node): Node[] {

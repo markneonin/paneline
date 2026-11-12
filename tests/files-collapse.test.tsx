@@ -65,11 +65,20 @@ describe("files folding", () => {
   test("a checkout header collapses to one row with the branch and the sum of all its files", async ($, on) => {
     worldOf(on);
     store.set("gitBranches", { value: { "/work": "main" }, version: 1 });
+    on("process.run", (_$, e) => {
+      const stdout =
+        e.argv.includes("--abbrev-ref") && e.argv.includes("--show-toplevel")
+          ? "/work\nabc\nmain"
+          : e.argv.includes("--abbrev-ref")
+            ? "main"
+            : "/work";
+      return { value: { exitCode: 0, stdout, stderr: "" } } as never;
+    });
     const pane = await paneWith($, [edit("/work/a.ts", 2, 1), edit("/work/src/b.ts", 5, 0)]);
 
-    await press(pane, "▾ /work/");
+    await press(pane, "▾ work/");
 
-    expect(await treeOf(pane)).toEqual(["▸ /work/ · main+7 -1"]);
+    expect(await treeOf(pane)).toEqual(["▸ work/ · main+7 -1"]);
   });
 
   test("a folded folder stays folded after a redraw and after leaving the tab and coming back", async ($, on) => {
@@ -160,6 +169,7 @@ function worldOf(on: On): void {
     value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] },
   }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("agent.list", () => ({ value: [] }));
   on("fs.exists", (_$, e) => (missing.has(e.path) ? { value: false } : { value: true }));

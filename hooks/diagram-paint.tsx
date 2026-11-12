@@ -2,7 +2,20 @@ import type { ElementTable, RenderElement } from "claude-code";
 
 import { WIDE_PAD } from "./diagram-source";
 import { palette } from "./palette";
-import type { ReplyLook } from "./reply-look";
+import { button } from "./pane-kit";
+
+export type DiagramLook = {
+  accent: string | undefined;
+  strong: string | undefined;
+  prose: string | undefined;
+  muted: string;
+  rule: string;
+  hues: readonly string[];
+};
+
+export const PANEL_PADDING_X = 2;
+
+type OpenDiagram = () => void;
 
 type Grid = string[][];
 type ColorGrid = (string | undefined)[][];
@@ -24,8 +37,9 @@ const AXIS_MARK = /[│┤┼]/;
 export function diagramPanel(
   ui: ElementTable,
   art: string,
-  look: ReplyLook,
+  look: DiagramLook,
   key: string,
+  onOpen?: OpenDiagram,
 ): RenderElement {
   const rows = art.split("\n").map((line) => [...line]);
   const colors = paint(rows, look);
@@ -33,14 +47,16 @@ export function diagramPanel(
     ui,
     key,
     rows.map((row, y) => runsOf(row, colors[y]!)),
+    onOpen,
   );
 }
 
 export function listPanel(
   ui: ElementTable,
   lines: string[],
-  look: ReplyLook,
+  look: DiagramLook,
   key: string,
+  onOpen?: OpenDiagram,
 ): RenderElement {
   const rows = lines.map((line) => [...line]);
   const colors = rows.map((row) => row.map((char) => (char === "→" ? look.accent : look.prose)));
@@ -48,12 +64,30 @@ export function listPanel(
     ui,
     key,
     rows.map((row, y) => runsOf(row, colors[y]!)),
+    onOpen,
   );
 }
 
-function panelOf({ Box, Text }: ElementTable, key: string, lines: Run[][]): RenderElement {
+function panelOf(
+  ui: ElementTable,
+  key: string,
+  lines: Run[][],
+  onOpen: OpenDiagram | undefined,
+): RenderElement {
+  const { Box, Text } = ui;
   return (
-    <Box key={key} flexDirection="column" alignSelf="flex-start" paddingX={2} paddingY={1}>
+    <Box
+      key={key}
+      flexDirection="column"
+      alignSelf="flex-start"
+      paddingX={PANEL_PADDING_X}
+      paddingBottom={1}
+    >
+      <Box height={1} justifyContent="flex-end">
+        {onOpen === undefined
+          ? null
+          : button(ui, { key: `open-${key}`, label: "Open", onPress: onOpen })}
+      </Box>
       {lines.map((runs, y) => (
         <Text key={`${key}.${y}`}>
           {runs.length === 0
@@ -80,7 +114,7 @@ function runsOf(chars: string[], colors: (string | undefined)[]): Run[] {
   return runs;
 }
 
-function paint(grid: Grid, look: ReplyLook): ColorGrid {
+function paint(grid: Grid, look: DiagramLook): ColorGrid {
   const colors: ColorGrid = grid.map((row) => row.map(() => undefined));
   paintBoxes(grid, colors, look);
   const barColors = barColorOf(grid, look);
@@ -97,7 +131,7 @@ function colorOf(
   row: string[],
   x: number,
   barColor: string | undefined,
-  look: ReplyLook,
+  look: DiagramLook,
 ): string | undefined {
   const char = row[x]!;
   if (char === "█") return barColor;
@@ -108,7 +142,7 @@ function colorOf(
   return look.prose;
 }
 
-function paintBoxes(grid: Grid, colors: ColorGrid, look: ReplyLook): void {
+function paintBoxes(grid: Grid, colors: ColorGrid, look: DiagramLook): void {
   const rects = findRects(grid);
   const innermost = rects.filter((outer) => !rects.some((inner) => isInside(inner, outer)));
   const hues = new Map<string, string>();
@@ -165,12 +199,12 @@ function rectFrom(grid: Grid, top: number, left: number): Rect | undefined {
   return { top, left, bottom, right };
 }
 
-const strongOf = (look: ReplyLook): string | undefined =>
+const strongOf = (look: DiagramLook): string | undefined =>
   look.strong === palette.userText ? look.prose : look.strong;
 
 type BarColorOf = (y: number, x: number) => string | undefined;
 
-function barColorOf(grid: Grid, look: ReplyLook): BarColorOf {
+function barColorOf(grid: Grid, look: DiagramLook): BarColorOf {
   const legendRows = new Set(
     grid.flatMap((row, y) =>
       row.includes("█") && !row.some((char) => AXIS_MARK.test(char)) ? [y] : [],

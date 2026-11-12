@@ -68,7 +68,7 @@ describe("spend before tracking", () => {
     const split = (await blocks(pane))[SPLIT_TITLE];
     expect(await splitOf(pane)).toEqual([
       [BEFORE_TRACKING, "~$80.00", "90%"],
-      ["main · opus 5.5", "~$4.00", "4%"],
+      ["main · opus 5.5", "~$4.00", "5%"],
       ["background", "~$3.00", "3%"],
       ["implementer", "~$2.00", "2%"],
     ]);
@@ -119,7 +119,7 @@ describe("spend before tracking", () => {
 
     expect(await splitOf(await spendPane($))).toEqual([
       [BEFORE_TRACKING, "~$82.00", "90%"],
-      ["main · opus 5.5", "~$4.00", "4%"],
+      ["main · opus 5.5", "~$4.00", "5%"],
       ["background", "~$3.00", "3%"],
       ["implementer", "~$2.00", "2%"],
     ]);

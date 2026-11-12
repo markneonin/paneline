@@ -1,5 +1,6 @@
 export const THEMES = {
   light: {
+    subtle: [175, 175, 175],
     text: [0, 0, 0],
     inactive: [102, 102, 102],
     permission: [87, 105, 247],
@@ -28,6 +29,7 @@ export const THEMES = {
   "light-ansi": {
     text: [0, 0, 0],
     inactive: [127, 127, 127],
+    promptBorder: [229, 229, 229],
     permission: [0, 0, 238],
     success: [0, 205, 0],
     error: [205, 0, 0],
@@ -78,6 +80,7 @@ export const THEMES = {
     cyan_FOR_SUBAGENTS_ONLY: [0, 255, 255],
   },
   "light-daltonized": {
+    subtle: [175, 175, 175],
     text: [0, 0, 0],
     inactive: [102, 102, 102],
     permission: [51, 102, 255],

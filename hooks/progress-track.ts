@@ -1,7 +1,7 @@
 import { atom, read, update } from "claude-code";
 import type { EngineInterface, On } from "claude-code";
 
-import { TYPED } from "./chat-render";
+import { TYPED } from "./typed-origin";
 import { PROGRESS_TOOL } from "./tools";
 
 export type Status = "pending" | "in_progress" | "completed";

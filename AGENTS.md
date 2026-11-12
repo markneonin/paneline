@@ -18,7 +18,7 @@ Never edit files in `backlog/` by hand. A new feature starts as a task whose acc
 - `npm run check` runs lint, format check, typecheck and tests.
 - `claude plugin validate .` checks the manifest and the hooks the way the engine will load them.
 - Both must pass before a commit. Husky runs lint-staged and typecheck on commit. Never use `--no-verify`.
-- `.claude-plugin/types/` is not tracked. The engine writes it when it loads the plugin from a folder. If lint or typecheck fail on `claude-code` types, run `claude plugin validate .` once, then retry.
+- `.claude-plugin/types/` is not tracked. Only an interactive `claude --plugin-dir .` session writes it; `claude plugin validate .` does not. If lint or typecheck fail on `claude-code` types, start `claude --plugin-dir .` once, then retry.
 
 ## Commits
 

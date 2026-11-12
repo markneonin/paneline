@@ -1,13 +1,16 @@
 import { describe, expect, test } from "claude-code/testing";
 import type { Engine } from "claude-code/testing";
 
+import { TOKENS_BILLED_LABEL } from "../hooks/spend-model";
+import { screenRows } from "./band-screen";
+
 import {
+  COLUMNS,
   FLUSH_MS,
   SHORT_ROWS,
   clearButtonsOf,
   editFile,
   finishAgent,
-  headingLineOf,
   isDim,
   lines,
   paneOnTab,
@@ -18,17 +21,18 @@ import {
   texts,
   worldOf,
 } from "./clear-world";
-import type { World } from "./clear-world";
+import type { Pane, World } from "./clear-world";
 
 const MORE_DONE = /^… \d+ more done$/;
-const FINISHED_AGENTS = 8;
+const FINISHED_AGENTS = 20;
 const POLL_MS = 1_000;
 const OLD_SPEND = 3_000;
 const FRESH_SPEND = 800;
+const SECOND_SPEND = 400;
 const SESSION_COST = 0.42;
 
 describe("agents clear button", () => {
-  test("G1 with subagents the first line ends with a dim clear button after the session cost", async ($, on) => {
+  test("G1 with subagents the first line ends with a dim clear button", async ($, on) => {
     const world = worldOf(on);
     await setSessionCost($, world, SESSION_COST);
     await finishedAgent($, world, "alpha");
@@ -36,10 +40,10 @@ describe("agents clear button", () => {
     const pane = await paneOnTab($, "Agents");
 
     const shown = await lines(pane);
-    const first = headingLineOf(shown, "main");
+    const first = shown.find((line) => /^\s*Agents\b/.test(line.text));
     expect(clearButtonsOf(shown)).toHaveLength(1);
     expect(first?.parts.at(-1)).toBe(clearButtonsOf(shown)[0]);
-    expect(first?.text).toMatch(/\$0\.42 clear$/);
+    expect(first?.text).toMatch(/1 done · .*clear$/);
     expect(clearButtonsOf(shown).every(isDim)).toBe(true);
   });
 
@@ -79,10 +83,10 @@ describe("agents clear button", () => {
 
     await pressClear(pane, world);
     await world.clock.advance(POLL_MS);
-    const whileRunning = await texts(pane);
+    const whileRunning = await screen(pane);
     await finishAgent($, world, running);
     await world.clock.advance(POLL_MS);
-    const afterFinish = await texts(pane);
+    const afterFinish = await screen(pane);
 
     expect(whileRunning.find((text) => text.includes("alpha"))).toContain("●");
     expect(whileRunning.some((text) => text.includes("bravo"))).toBe(false);
@@ -126,17 +130,25 @@ describe("agents clear button", () => {
     await finishAgent($, world, old);
     const pane = await paneOnTab($, "Agents");
     await pressClear(pane, world);
-    const spendAfterPress = headingLineOf(await lines(pane), "Spend");
+    const afterPress = await screen(pane);
+    const mainAfterPress = afterPress.find((row) => row.startsWith("○ main"));
 
     const fresh = await spawnAgent($, world, "fresh");
     await spendTokens($, world, fresh, FRESH_SPEND);
+    const second = await spawnAgent($, world, "second");
+    await spendTokens($, world, second, SECOND_SPEND);
     await world.clock.advance(POLL_MS);
 
-    const shown = await texts(pane);
-    const spendRows = shown.slice(shown.indexOf("Spend") + 1);
-    expect(spendAfterPress).toBeUndefined();
-    expect(spendRows).toHaveLength(1);
-    expect(spendRows[0]).toMatch(/fresh 800$/);
+    const shown = await screen(pane);
+    expect(mainAfterPress).toBe("○ main · opus · idle");
+    expect(afterPress.filter((row) => row.includes(TOKENS_BILLED_LABEL))).toEqual([]);
+    expect(shown.filter((row) => row.includes(TOKENS_BILLED_LABEL))).toEqual([TOKENS_BILLED_LABEL]);
+    expect(
+      shown.filter((row) => row.includes("old")),
+      "old rows",
+    ).toEqual([]);
+    expect(tokensOn(shown, "fresh")).toBe("800");
+    expect(tokensOn(shown, "second")).toBe("400");
   });
 
   test("G8 in a short pane the line with the count of hidden finished subagents is gone after the press", async ($, on) => {
@@ -151,7 +163,7 @@ describe("agents clear button", () => {
     expect([hasMoreDoneBefore, hasMoreDoneAfter]).toEqual([true, false]);
   });
 
-  test("G9 the session cost on the first line is still shown after the press", async ($, on) => {
+  test("G9 the main row is still shown after the press", async ($, on) => {
     const world = worldOf(on);
     await setSessionCost($, world, SESSION_COST);
     await finishedAgent($, world, "alpha");
@@ -159,7 +171,7 @@ describe("agents clear button", () => {
 
     await pressClear(pane, world);
 
-    expect(await texts(pane)).toContain("main · opus $0.42");
+    expect((await texts(pane)).some((text) => text.startsWith("○ main · opus"))).toBe(true);
   });
 
   test("G10 a subagent that finished before the press and steps again shows as running and its new tokens are in Spend", async ($, on) => {
@@ -170,12 +182,13 @@ describe("agents clear button", () => {
     await pressClear(pane, world);
 
     await spendTokens($, world, resumed, FRESH_SPEND);
+    const other = await spawnAgent($, world, "bravo");
+    await spendTokens($, world, other, SECOND_SPEND);
 
-    const shown = await texts(pane);
-    const spendRows = shown.slice(shown.indexOf("Spend") + 1);
+    const shown = await screen(pane);
     expect(shown.find((text) => text.includes("alpha"))).toContain("●");
-    expect(spendRows).toHaveLength(1);
-    expect(spendRows[0]).toMatch(/alpha 800$/);
+    expect(tokensOn(shown, "alpha")).toBe("800");
+    expect(tokensOn(shown, "bravo")).toBe("400");
   });
 
   test("G11 a subagent that finished before the press and calls a tool again shows as running", async ($, on) => {
@@ -188,7 +201,7 @@ describe("agents clear button", () => {
     await editFile($, world, "/work/a.ts", 1, 0, resumed);
     await world.clock.advance(FLUSH_MS);
 
-    const alphaRows = (await texts(pane)).filter((text) => text.includes("alpha"));
+    const alphaRows = (await screen(pane)).filter((text) => text.includes("alpha"));
     expect(alphaRows).toHaveLength(1);
     expect(alphaRows[0]).toContain("●");
   });
@@ -196,4 +209,15 @@ describe("agents clear button", () => {
 
 async function finishedAgent($: Engine, world: World, description: string): Promise<void> {
   await finishAgent($, world, await spawnAgent($, world, description));
+}
+
+async function screen(pane: Pane): Promise<string[]> {
+  return screenRows(await pane.drawn(), COLUMNS)
+    .map((row) => row.trim())
+    .filter((row) => row !== "");
+}
+
+function tokensOn(rows: string[], name: string): string | undefined {
+  const row = rows.find((text) => text.includes(name));
+  return /(\d[\d.]*k?)(?: (?:~|<)\$\d+\.\d{2})? ▸$/.exec(row ?? "")?.[1];
 }

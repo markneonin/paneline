@@ -89,6 +89,7 @@ function worldOf(on: On): World {
   });
   on("session.measure", (_$, e) => ({ changed: e.changed }));
   on("session.model", () => ({ value: "opus" }));
+  on("settings.read", () => ({ value: {} }));
   on("session.cwd", () => ({ value: "/work" }));
   on("ui.render", { component: "Pane" }, ($, e) => {
     const { Text } = $.ui.resolve(e);
